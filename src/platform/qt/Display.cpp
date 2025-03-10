@@ -5,54 +5,64 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "Display.h"
 
+#include "CoreController.h"
+#include "ConfigController.h"
 #include "DisplayGL.h"
 #include "DisplayQt.h"
+#include "LogController.h"
+#include "VideoProxy.h"
+#include "utils.h"
+
+#include <mgba-util/vfs.h>
 
 using namespace QGBA;
 
-#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(USE_EPOXY)
-Display::Driver Display::s_driver = Display::Driver::OPENGL;
+#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
+QGBA::Display::Driver QGBA::Display::s_driver = QGBA::Display::Driver::OPENGL;
 #else
-Display::Driver Display::s_driver = Display::Driver::QT;
+QGBA::Display::Driver QGBA::Display::s_driver = QGBA::Display::Driver::QT;
 #endif
 
-Display* Display::create(QWidget* parent) {
-#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(USE_EPOXY)
+QGBA::Display* QGBA::Display::create(QWidget* parent) {
+#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
 	QSurfaceFormat format;
 	format.setSwapInterval(1);
 	format.setSwapBehavior(QSurfaceFormat::DoubleBuffer);
 #endif
 
 	switch (s_driver) {
-#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(USE_EPOXY)
+#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
 	case Driver::OPENGL:
-		if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGLES) {
-			format.setVersion(3, 0);
-		} else {
-			format.setVersion(3, 2);
+	default:
+		if (DisplayGL::highestCompatible(format)) {
+			return new DisplayGL(format, parent);
 		}
-		format.setProfile(QSurfaceFormat::CoreProfile);
-		return new DisplayGL(format, parent);
+		break;
 #endif
 #ifdef BUILD_GL
 	case Driver::OPENGL1:
-		format.setVersion(1, 4);
-		return new DisplayGL(format, parent);
+		if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL) {
+			format.setVersion(1, 4);
+		} else {
+			format.setVersion(1, 1);
+		}
+		if (DisplayGL::supportsFormat(format)) {
+			return new DisplayGL(format, parent);
+		}
+		break;
 #endif
 
 	case Driver::QT:
+#if !defined(BUILD_GL) && !defined(BUILD_GLES2) && !defined(BUILD_GLES3) && !defined(USE_EPOXY)
+	default:
+#endif
 		return new DisplayQt(parent);
 
-	default:
-#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(USE_EPOXY)
-		return new DisplayGL(format, parent);
-#else
-		return new DisplayQt(parent);
-#endif
 	}
+	return nullptr;
 }
 
-Display::Display(QWidget* parent)
+QGBA::Display::Display(QWidget* parent)
 	: QWidget(parent)
 {
 	setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::MinimumExpanding);
@@ -62,40 +72,126 @@ Display::Display(QWidget* parent)
 	setMouseTracking(true);
 }
 
-void Display::resizeEvent(QResizeEvent*) {
-	m_messagePainter.resize(size(), m_lockAspectRatio, devicePixelRatio());
+void QGBA::Display::attach(std::shared_ptr<CoreController> controller) {
+	CoreController* controllerP = controller.get();
+	connect(controllerP, &CoreController::stateLoaded, this, &Display::resizeContext);
+	connect(controllerP, &CoreController::stateLoaded, this, &Display::forceDraw);
+	connect(controllerP, &CoreController::rewound, this, &Display::forceDraw);
+	connect(controllerP, &CoreController::paused, this, &Display::pauseDrawing);
+	connect(controllerP, &CoreController::unpaused, this, &Display::unpauseDrawing);
+	connect(controllerP, &CoreController::frameAvailable, this, &Display::framePosted);
+	connect(controllerP, &CoreController::frameAvailable, this, [controllerP, this]() {
+		if (m_showFrameCounter) {
+			m_messagePainter.showFrameCounter(controllerP->frameCounter());
+		}
+	});
+	connect(controllerP, &CoreController::statusPosted, this, &Display::showMessage);
+	connect(controllerP, &CoreController::didReset, this, &Display::resizeContext);
 }
 
-void Display::lockAspectRatio(bool lock) {
+void QGBA::Display::configure(ConfigController* config) {
+	const mCoreOptions* opts = config->options();
+	lockAspectRatio(opts->lockAspectRatio);
+	lockIntegerScaling(opts->lockIntegerScaling);
+	interframeBlending(opts->interframeBlending);
+	filter(opts->resampleVideo);
+	config->updateOption("showOSD");
+	config->updateOption("showFrameCounter");
+	config->updateOption("videoSync");
+#if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(BUILD_GLES3)
+	if (opts->shader && supportsShaders()) {
+		struct VDir* shader = VDirOpenArchive(opts->shader);
+		if (!shader) {
+			shader = VDirOpen(opts->shader);
+		}
+		if (shader) {
+			setShaders(shader);
+			shader->close(shader);
+		}
+	}
+#endif
+}
+
+VideoBackend* QGBA::Display::videoBackend() {
+	if (m_videoProxy) {
+		return m_videoProxy->backend();
+	}
+	return nullptr;
+}
+
+void QGBA::Display::resizeEvent(QResizeEvent*) {
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 6, 0))
+	m_messagePainter.resize(size(), devicePixelRatioF());
+#else
+	m_messagePainter.resize(size(), devicePixelRatio());
+#endif
+}
+
+void QGBA::Display::lockAspectRatio(bool lock) {
 	m_lockAspectRatio = lock;
-	m_messagePainter.resize(size(), m_lockAspectRatio, devicePixelRatio());
 }
 
-void Display::lockIntegerScaling(bool lock) {
+void QGBA::Display::lockIntegerScaling(bool lock) {
 	m_lockIntegerScaling = lock;
 }
 
-void Display::interframeBlending(bool lock) {
+void QGBA::Display::interframeBlending(bool lock) {
 	m_interframeBlending = lock;
 }
 
-void Display::showOSDMessages(bool enable) {
+void QGBA::Display::showOSDMessages(bool enable) {
 	m_showOSD = enable;
 }
 
-void Display::filter(bool filter) {
+void QGBA::Display::showFrameCounter(bool enable) {
+	m_showFrameCounter = enable;
+	if (!enable) {
+		m_messagePainter.clearFrameCounter();
+	}
+}
+
+void QGBA::Display::filter(bool filter) {
 	m_filter = filter;
 }
 
-void Display::showMessage(const QString& message) {
+void QGBA::Display::showMessage(const QString& message) {
 	m_messagePainter.showMessage(message);
 	if (!isDrawing()) {
 		forceDraw();
 	}
 }
 
-void Display::mouseMoveEvent(QMouseEvent*) {
+void QGBA::Display::mouseMoveEvent(QMouseEvent*) {
 	emit showCursor();
 	m_mouseTimer.stop();
 	m_mouseTimer.start();
+}
+
+QPoint QGBA::Display::normalizedPoint(CoreController* controller, const QPoint& localRef) {
+	QSize screen(controller->screenDimensions());
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 6, 0))
+	QSize newSize((QSizeF(size()) * devicePixelRatioF()).toSize());
+#else
+	QSize newSize((QSizeF(size()) * devicePixelRatio()).toSize());
+#endif
+
+	if (m_lockAspectRatio) {
+		QGBA::lockAspectRatio(screen, newSize);
+	}
+
+	if (m_lockIntegerScaling) {
+		QGBA::lockIntegerScaling(screen, newSize);
+	}
+
+	QPointF newPos(localRef);
+	newPos -= QPointF(width() / 2.0, height() / 2.0);
+	newPos = QPointF(newPos.x() * screen.width(), newPos.y() * screen.height());
+	newPos = QPointF(newPos.x() / newSize.width(), newPos.y() / newSize.height());
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 6, 0))
+	newPos *= devicePixelRatioF();
+#else
+	newPos *= devicePixelRatio();
+#endif
+	newPos += QPointF(screen.width() / 2.0, screen.height() / 2.0);
+	return newPos.toPoint();
 }

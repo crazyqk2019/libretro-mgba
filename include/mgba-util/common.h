@@ -16,6 +16,22 @@
 
 CXX_GUARD_START
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+// Require Windows 7 or newer
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#elif _WIN32_WINNT < 0x0601
+#undef _WIN32_WINNT
+#define _WIN32_WINNT 0x0601
+#endif
+// WinSock2 gets very angry if it's included too late
+#include <winsock2.h>
+#endif
+
+#include <assert.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -30,13 +46,12 @@ CXX_GUARD_START
 #include <string.h>
 #include <time.h>
 
-#ifdef _WIN32
-// WinSock2 gets very angry if it is included too late
-#include <winsock2.h>
-#endif
-
 #if defined(_MSC_VER) || defined(__cplusplus)
 #define restrict __restrict
+#endif
+
+#ifndef containerof
+#define containerof(PTR, TYPE, MEMBER) ((TYPE*) ((uintptr_t) (PTR) - offsetof(TYPE, MEMBER)))
 #endif
 
 #ifdef _MSC_VER
@@ -51,15 +66,15 @@ typedef intptr_t ssize_t;
 #define strdup _strdup
 #define lseek _lseek
 #define O_ACCMODE (O_RDONLY|O_WRONLY|O_RDWR)
-#elif defined(__wii__)
-#include <sys/time.h>
-typedef intptr_t ssize_t;
 #else
-#if !defined(__CELLOS_LV2__) && !defined(PS2)
+#if !defined(PS2)
 #include <strings.h>
 #endif
 #include <unistd.h>
 #include <sys/time.h>
+#endif
+#ifdef GEKKO
+typedef intptr_t ssize_t;
 #endif
 
 #ifdef PSP2
@@ -67,12 +82,7 @@ typedef intptr_t ssize_t;
 #include <sys/syslimits.h>
 #endif
 
-#ifndef MGBA_STANDALONE
 #include <mgba-util/dllexports.h>
-#else
-#define MGBA_EXPORT
-#define MGBA_NO_EXPORT
-#endif
 
 #ifndef SSIZE_MAX
 #define SSIZE_MAX ((ssize_t) (SIZE_MAX >> 1))
@@ -84,6 +94,10 @@ typedef intptr_t ssize_t;
 
 #ifndef M_PI
 #define M_PI 3.141592654f
+#endif
+
+#if !defined(__cplusplus) && !defined(static_assert)
+#define static_assert(X, C) _Static_assert((X), C)
 #endif
 
 #if !defined(_MSC_VER) && (defined(__llvm__) || (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7))
@@ -108,57 +122,68 @@ typedef intptr_t ssize_t;
 #define ATOMIC_LOAD_PTR(DST, SRC) DST = InterlockedCompareExchangePointer(&SRC, 0, 0)
 #else
 /* TODO */
-#define ATOMIC_STORE(DST, SRC) DST = SRC
-#define ATOMIC_LOAD(DST, SRC) DST = SRC
-#define ATOMIC_ADD(DST, OP) DST += OP
-#define ATOMIC_SUB(DST, OP) DST -= OP
-#define ATOMIC_OR(DST, OP) DST |= OP
-#define ATOMIC_AND(DST, OP) DST &= OP
-#define ATOMIC_CMPXCHG(DST, EXPECTED, OP) ((DST == EXPECTED) ? ((DST = OP), true) : false)
+#define ATOMIC_STORE(DST, SRC) ((DST) = (SRC))
+#define ATOMIC_LOAD(DST, SRC) ((DST) = (SRC))
+#define ATOMIC_ADD(DST, OP) ((DST) += (OP))
+#define ATOMIC_SUB(DST, OP) ((DST) -= (OP))
+#define ATOMIC_OR(DST, OP) ((DST) |= (OP))
+#define ATOMIC_AND(DST, OP) ((DST) &= (OP))
+#define ATOMIC_CMPXCHG(DST, EXPECTED, OP) (((DST) == (EXPECTED)) ? (((DST) = (OP)), true) : false)
 #define ATOMIC_STORE_PTR(DST, SRC) ATOMIC_STORE(DST, SRC)
 #define ATOMIC_LOAD_PTR(DST, SRC) ATOMIC_LOAD(DST, SRC)
 #endif
 
-#if defined(_3DS) || defined(GEKKO) || defined(PSP2)
-// newlib does not support %z properly by default
+#if defined(__3DS__) || defined(GEKKO) || defined(PSP2)
+// newlib doesn't support %z properly by default
 #define PRIz ""
-#elif defined(_WIN64)
-#define PRIz "I64"
-#elif defined(_WIN32)
-#define PRIz ""
+#elif defined(_MSC_VER)
+#define PRIz "I"
 #else
 #define PRIz "z"
 #endif
 
 #if defined __BIG_ENDIAN__
+#define LOAD_64BE(DEST, ADDR, ARR) DEST = *(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR))
 #define LOAD_32BE(DEST, ADDR, ARR) DEST = *(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR))
-#if defined(__PPC__) || defined(__POWERPC__)
+#define LOAD_16BE(DEST, ADDR, ARR) DEST = *(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR))
+#define STORE_64BE(SRC, ADDR, ARR) *(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = SRC
+#define STORE_32BE(SRC, ADDR, ARR) *(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = SRC
+#define STORE_16BE(SRC, ADDR, ARR) *(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = SRC
+#if defined(__llvm__) || (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 8)
+#define LOAD_64LE(DEST, ADDR, ARR) DEST = __builtin_bswap64(*(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define LOAD_32LE(DEST, ADDR, ARR) DEST = __builtin_bswap32(*(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define LOAD_16LE(DEST, ADDR, ARR) DEST = __builtin_bswap16(*(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define STORE_64LE(SRC, ADDR, ARR) *(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = __builtin_bswap64(SRC)
+#define STORE_32LE(SRC, ADDR, ARR) *(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = __builtin_bswap32(SRC)
+#define STORE_16LE(SRC, ADDR, ARR) *(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = __builtin_bswap16(SRC)
+#elif defined(__PPC__) || defined(__POWERPC__)
 #define LOAD_32LE(DEST, ADDR, ARR) { \
-	uint32_t _addr = (ADDR); \
+	size_t _addr = (ADDR); \
 	const void* _ptr = (ARR); \
 	__asm__("lwbrx %0, %1, %2" : "=r"(DEST) : "b"(_ptr), "r"(_addr)); \
 }
 
 #define LOAD_16LE(DEST, ADDR, ARR) { \
-	uint32_t _addr = (ADDR); \
+	size_t _addr = (ADDR); \
 	const void* _ptr = (ARR); \
 	__asm__("lhbrx %0, %1, %2" : "=r"(DEST) : "b"(_ptr), "r"(_addr)); \
 }
 
 #define STORE_32LE(SRC, ADDR, ARR) { \
-	uint32_t _addr = (ADDR); \
+	size_t _addr = (ADDR); \
 	void* _ptr = (ARR); \
 	__asm__("stwbrx %0, %1, %2" : : "r"(SRC), "b"(_ptr), "r"(_addr) : "memory"); \
 }
 
 #define STORE_16LE(SRC, ADDR, ARR) { \
-	uint32_t _addr = (ADDR); \
+	size_t _addr = (ADDR); \
 	void* _ptr = (ARR); \
 	__asm__("sthbrx %0, %1, %2" : : "r"(SRC), "b"(_ptr), "r"(_addr) : "memory"); \
 }
 
+#ifndef _ARCH_PWR7
 #define LOAD_64LE(DEST, ADDR, ARR) { \
-	uint32_t _addr = (ADDR); \
+	size_t _addr = (ADDR); \
 	union { \
 		struct { \
 			uint32_t hi; \
@@ -175,7 +200,7 @@ typedef intptr_t ssize_t;
 }
 
 #define STORE_64LE(SRC, ADDR, ARR) { \
-	uint32_t _addr = (ADDR); \
+	size_t _addr = (ADDR); \
 	union { \
 		struct { \
 			uint32_t hi; \
@@ -189,14 +214,19 @@ typedef intptr_t ssize_t;
 		"stwbrx %1, %2, %4 \n" \
 		: : "r"(bswap.hi), "r"(bswap.lo), "b"(_ptr), "r"(_addr), "r"(_addr + 4) : "memory"); \
 }
+#else
+#define LOAD_64LE(DEST, ADDR, ARR) { \
+	size_t _addr = (ADDR); \
+	const void* _ptr = (ARR); \
+	__asm__("ldbrx %0, %1, %2" : "=r"(DEST) : "b"(_ptr), "r"(_addr)); \
+}
 
-#elif defined(__llvm__) || (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 8)
-#define LOAD_64LE(DEST, ADDR, ARR) DEST = __builtin_bswap64(((uint64_t*) ARR)[(ADDR) >> 3])
-#define LOAD_32LE(DEST, ADDR, ARR) DEST = __builtin_bswap32(((uint32_t*) ARR)[(ADDR) >> 2])
-#define LOAD_16LE(DEST, ADDR, ARR) DEST = __builtin_bswap16(((uint16_t*) ARR)[(ADDR) >> 1])
-#define STORE_64LE(SRC, ADDR, ARR) ((uint64_t*) ARR)[(ADDR) >> 3] = __builtin_bswap64(SRC)
-#define STORE_32LE(SRC, ADDR, ARR) ((uint32_t*) ARR)[(ADDR) >> 2] = __builtin_bswap32(SRC)
-#define STORE_16LE(SRC, ADDR, ARR) ((uint16_t*) ARR)[(ADDR) >> 1] = __builtin_bswap16(SRC)
+#define STORE_64LE(SRC, ADDR, ARR) { \
+	size_t _addr = (ADDR); \
+	void* _ptr = (ARR); \
+	__asm__("stdbrx %0, %1, %2" : : "r"(SRC), "b"(_ptr), "r"(_addr) : "memory"); \
+}
+#endif
 #else
 #error Big endian build not supported on this platform.
 #endif
@@ -208,9 +238,19 @@ typedef intptr_t ssize_t;
 #define STORE_32LE(SRC, ADDR, ARR) *(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = SRC
 #define STORE_16LE(SRC, ADDR, ARR) *(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = SRC
 #ifdef _MSC_VER
-#define LOAD_32BE(DEST, ADDR, ARR) DEST = _byteswap_ulong(((uint32_t*) ARR)[(ADDR) >> 2])
+#define LOAD_64BE(DEST, ADDR, ARR) DEST = _byteswap_uint64(*(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define LOAD_32BE(DEST, ADDR, ARR) DEST = _byteswap_ulong(*(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define LOAD_16BE(DEST, ADDR, ARR) DEST = _byteswap_ushort(*(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define STORE_64BE(SRC, ADDR, ARR) *(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = _byteswap_uint64(SRC)
+#define STORE_32BE(SRC, ADDR, ARR) *(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = _byteswap_ulong(SRC)
+#define STORE_16BE(SRC, ADDR, ARR) *(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = _byteswap_ushort(SRC)
 #else
-#define LOAD_32BE(DEST, ADDR, ARR) DEST = __builtin_bswap32(((uint32_t*) ARR)[(ADDR) >> 2])
+#define LOAD_64BE(DEST, ADDR, ARR) DEST = __builtin_bswap64(*(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define LOAD_32BE(DEST, ADDR, ARR) DEST = __builtin_bswap32(*(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define LOAD_16BE(DEST, ADDR, ARR) DEST = __builtin_bswap16(*(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)))
+#define STORE_64BE(SRC, ADDR, ARR) *(uint64_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = __builtin_bswap64(SRC)
+#define STORE_32BE(SRC, ADDR, ARR) *(uint32_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = __builtin_bswap32(SRC)
+#define STORE_16BE(SRC, ADDR, ARR) *(uint16_t*) ((uintptr_t) (ARR) + (size_t) (ADDR)) = __builtin_bswap16(SRC)
 #endif
 #endif
 
@@ -229,9 +269,9 @@ typedef intptr_t ssize_t;
 #define ATTRIBUTE_NOINLINE
 // Adapted from https://stackoverflow.com/a/2390626
 #define _CONSTRUCTOR(FN, PRE) \
-    static void FN(void); \
-    __declspec(allocate(".CRT$XCU")) void (*_CONSTRUCTOR_ ## FN)(void) = FN; \
-    static void FN(void)
+	static void FN(void); \
+	__declspec(allocate(".CRT$XCU")) void (*_CONSTRUCTOR_ ## FN)(void) = FN; \
+	static void FN(void)
 #ifdef _WIN64
 #define CONSTRUCTOR(FN) _CONSTRUCTOR(FN, "")
 #else
@@ -277,6 +317,26 @@ typedef intptr_t ssize_t;
 #endif
 
 #define ROR(I, ROTATE) ((((uint32_t) (I)) >> ROTATE) | ((uint32_t) (I) << ((-ROTATE) & 31)))
+
+#define mASSERT(COND) \
+	if (!(COND)) { \
+		abort(); \
+	}
+#define mASSERT_DEBUG(COND) assert((COND))
+
+#define mASSERT_LOG(CAT, COND, ...) \
+	if (!(COND)) { \
+		mLOG(CAT, FATAL, __VA_ARGS__); \
+	}
+
+#ifdef NDEBUG
+#define mASSERT_DEBUG_LOG(...)
+#else
+#define mASSERT_DEBUG_LOG(CAT, COND, ...) \
+	if (!(COND)) { \
+		mLOG(CAT, FATAL, __VA_ARGS__); \
+	}
+#endif
 
 CXX_GUARD_END
 

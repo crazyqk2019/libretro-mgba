@@ -10,14 +10,20 @@
 
 CXX_GUARD_START
 
+#include <mgba/core/log.h>
 #include <mgba/core/timing.h>
 #include <mgba/gb/interface.h>
+
+mLOG_DECLARE_CATEGORY(GB_VIDEO);
 
 enum {
 	GB_VIDEO_HORIZONTAL_PIXELS = 160,
 	GB_VIDEO_VERTICAL_PIXELS = 144,
 	GB_VIDEO_VBLANK_PIXELS = 10,
 	GB_VIDEO_VERTICAL_TOTAL_PIXELS = 154,
+
+	SGB_VIDEO_HORIZONTAL_PIXELS = 256,
+	SGB_VIDEO_VERTICAL_PIXELS = 224,
 
 	// TODO: Figure out exact lengths
 	GB_VIDEO_MODE_2_LENGTH = 80,
@@ -27,6 +33,9 @@ enum {
 	GB_VIDEO_HORIZONTAL_LENGTH = 456,
 
 	GB_VIDEO_TOTAL_LENGTH = 70224,
+
+	GB_VIDEO_MAX_OBJ = 40,
+	GB_VIDEO_MAX_LINE_OBJ = 10,
 
 	GB_BASE_MAP = 0x1800,
 	GB_SIZE_MAP = 0x0400,
@@ -60,8 +69,8 @@ struct GBObj {
 };
 
 union GBOAM {
-	struct GBObj obj[40];
-	uint8_t raw[160];
+	struct GBObj obj[GB_VIDEO_MAX_OBJ];
+	uint8_t raw[GB_VIDEO_MAX_OBJ * 4];
 };
 
 struct mCacheSet;
@@ -74,7 +83,7 @@ struct GBVideoRenderer {
 	void (*writeVRAM)(struct GBVideoRenderer* renderer, uint16_t address);
 	void (*writePalette)(struct GBVideoRenderer* renderer, int index, uint16_t value);
 	void (*writeOAM)(struct GBVideoRenderer* renderer, uint16_t oam);
-	void (*drawRange)(struct GBVideoRenderer* renderer, int startX, int endX, int y, struct GBObj* objOnLine, size_t nObj);
+	void (*drawRange)(struct GBVideoRenderer* renderer, int startX, int endX, int y);
 	void (*finishScanline)(struct GBVideoRenderer* renderer, int y);
 	void (*finishFrame)(struct GBVideoRenderer* renderer);
 	void (*enableSGBBorder)(struct GBVideoRenderer* renderer, bool enable);
@@ -96,6 +105,12 @@ struct GBVideoRenderer {
 	bool disableBG;
 	bool disableOBJ;
 	bool disableWIN;
+
+	bool highlightBG;
+	bool highlightOBJ[GB_VIDEO_MAX_OBJ];
+	bool highlightWIN;
+	mColor highlightColor;
+	uint8_t highlightAmount;
 };
 
 DECL_BITFIELD(GBRegisterLCDC, uint8_t);
@@ -136,7 +151,6 @@ struct GBVideo {
 	int vramCurrentBank;
 
 	union GBOAM oam;
-	struct GBObj objThisLine[10];
 	int objMax;
 
 	int bcpIndex;
@@ -152,7 +166,7 @@ struct GBVideo {
 
 	bool sgbBorders;
 
-	int32_t frameCounter;
+	uint32_t frameCounter;
 	int frameskip;
 	int frameskipCounter;
 };
@@ -160,7 +174,11 @@ struct GBVideo {
 void GBVideoInit(struct GBVideo* video);
 void GBVideoReset(struct GBVideo* video);
 void GBVideoDeinit(struct GBVideo* video);
+
+void GBVideoDummyRendererCreate(struct GBVideoRenderer*);
 void GBVideoAssociateRenderer(struct GBVideo* video, struct GBVideoRenderer* renderer);
+
+void GBVideoSkipBIOS(struct GBVideo* video);
 void GBVideoProcessDots(struct GBVideo* video, uint32_t cyclesLate);
 
 void GBVideoWriteLCDC(struct GBVideo* video, GBRegisterLCDC value);

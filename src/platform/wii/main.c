@@ -14,13 +14,13 @@
 
 #include <mgba-util/common.h>
 
-#include <mgba/core/blip_buf.h>
 #include <mgba/core/core.h>
 #include "feature/gui/gui-runner.h"
 #include <mgba/internal/gb/video.h>
 #include <mgba/internal/gba/audio.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/input.h>
+#include <mgba-util/audio-resampler.h>
 #include <mgba-util/gui.h>
 #include <mgba-util/gui/file-select.h>
 #include <mgba-util/gui/font.h>
@@ -28,17 +28,22 @@
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
 
+#ifdef WIIDRC
+#include <wiidrc/wiidrc.h>
+#endif
+
 #define GCN1_INPUT 0x47434E31
 #define GCN2_INPUT 0x47434E32
 #define WIIMOTE_INPUT 0x5749494D
 #define CLASSIC_INPUT 0x57494943
+#define DRC_INPUT 0x44524355
 
 #define TEX_W 256
 #define TEX_H 224
 
 #define ANALOG_DEADZONE 0x30
 
-static void _mapKey(struct mInputMap* map, uint32_t binding, int nativeKey, enum GBAKey key) {
+static void _mapKey(struct mInputMap* map, uint32_t binding, int nativeKey, int key) {
 	mInputBindKey(map, binding, __builtin_ctz(nativeKey), key);
 }
 
@@ -71,9 +76,10 @@ static enum VideoMode {
 
 static void _retraceCallback(u32 count);
 
-static void _postAudioBuffer(struct mAVStream* stream, blip_t* left, blip_t* right);
+static void _postAudioBuffer(struct mAVStream* stream, struct mAudioBuffer*);
+static void _audioRateChanged(struct mAVStream* stream, unsigned);
 static void _audioDMA(void);
-static void _setRumble(struct mRumble* rumble, int enable);
+static void _setRumble(struct mRumble* rumble, bool enable, uint32_t sinceLast);
 static void _sampleRotation(struct mRotationSource* source);
 static int32_t _readTiltX(struct mRotationSource* source);
 static int32_t _readTiltY(struct mRotationSource* source);
@@ -84,6 +90,8 @@ static void _drawEnd(void);
 static uint32_t _pollInput(const struct mInputMap*);
 static enum GUICursorState _pollCursor(unsigned* x, unsigned* y);
 static void _guiPrepare(void);
+static enum GUIKeyboardStatus _keyboardRun(struct GUIKeyboardParams* keyboard);
+static struct GUIParams* params; // XXX
 
 static void _setup(struct mGUIRunner* runner);
 static void _gameLoaded(struct mGUIRunner* runner);
@@ -119,6 +127,7 @@ static bool sgbCrop = false;
 static int32_t tiltX;
 static int32_t tiltY;
 static int32_t gyroZ;
+static float gyroSensitivity = 1.f;
 static uint32_t retraceCount;
 static uint32_t referenceRetraceCount;
 static bool frameLimiter = true;
@@ -133,12 +142,15 @@ static void* framebuffer[2] = { 0, 0 };
 static int whichFb = 0;
 
 static struct AudioBuffer {
-	struct GBAStereoSample samples[SAMPLES] __attribute__((__aligned__(32)));
-	volatile size_t size;
-} audioBuffer[BUFFERS] = {0};
+	int16_t samples[SAMPLES * 2] __attribute__((__aligned__(32)));
+	volatile bool full;
+} audioBuffers[BUFFERS] = {0};
+static struct mAudioBuffer audioBuffer;
 static volatile int currentAudioBuffer = 0;
 static volatile int nextAudioBuffer = 0;
-static double audioSampleRate = 60.0 / 1.001;
+static double fps = 60.0 / 1.001;
+static double fpsRatio = 1;
+static struct mAudioResampler resampler;
 
 static struct GUIFont* font;
 
@@ -152,7 +164,7 @@ static void reconfigureScreen(struct mGUIRunner* runner) {
 	wAdjust = 1.f;
 	hAdjust = 1.f;
 	guiScale = GUI_SCALE;
-	audioSampleRate = 60.0 / 1.001;
+	fps = 60.0 / 1.001;
 
 	s32 signalMode = CONF_GetVideo();
 
@@ -200,7 +212,7 @@ static void reconfigureScreen(struct mGUIRunner* runner) {
 			break;
 		}
 		wAdjust = 0.5f;
-		audioSampleRate = 90.0 / 1.50436;
+		fps = 90.0 / 1.50436;
 		guiScale = GUI_SCALE_240p;
 		break;
 	}
@@ -238,11 +250,6 @@ static void reconfigureScreen(struct mGUIRunner* runner) {
 	if (runner) {
 		runner->params.width = vmode->fbWidth * guiScale * wAdjust;
 		runner->params.height = vmode->efbHeight * guiScale * hAdjust;
-		if (runner->core) {
-			double ratio = GBAAudioCalculateRatio(1, audioSampleRate, 1);
-			blip_set_rates(runner->core->getAudioChannel(runner->core, 0), runner->core->frequency(runner->core), 48000 * ratio);
-			blip_set_rates(runner->core->getAudioChannel(runner->core, 1), runner->core->frequency(runner->core), 48000 * ratio);
-		}
 	}
 }
 
@@ -254,15 +261,21 @@ int main(int argc, char* argv[]) {
 	PAD_Init();
 	WPAD_Init();
 	WPAD_SetDataFormat(0, WPAD_FMT_BTNS_ACC_IR);
+#ifdef WIIDRC
+	WiiDRC_Init();
+#endif
 	AUDIO_Init(0);
 	AUDIO_SetDSPSampleRate(AI_SAMPLERATE_48KHZ);
 	AUDIO_RegisterDMACallback(_audioDMA);
 
-	memset(audioBuffer, 0, sizeof(audioBuffer));
+	memset(audioBuffers, 0, sizeof(audioBuffers));
+	mAudioBufferInit(&audioBuffer, SAMPLES * BUFFERS, 2);
+	mAudioResamplerInit(&resampler, mINTERPOLATOR_COSINE);
+	mAudioResamplerSetDestination(&resampler, &audioBuffer, 48000);
 #ifdef FIXED_ROM_BUFFER
-	romBufferSize = SIZE_CART0;
+	romBufferSize = GBA_SIZE_ROM0;
 	romBuffer = SYS_GetArena2Lo();
-	SYS_SetArena2Lo((void*)((intptr_t) romBuffer + SIZE_CART0));
+	SYS_SetArena2Lo((void*)((intptr_t) romBuffer + romBufferSize));
 #endif
 
 #if !defined(COLOR_16_BIT) && !defined(COLOR_5_6_5)
@@ -337,6 +350,7 @@ int main(int argc, char* argv[]) {
 	stream.postVideoFrame = NULL;
 	stream.postAudioFrame = NULL;
 	stream.postAudioBuffer = _postAudioBuffer;
+	stream.audioRateChanged = _audioRateChanged;
 
 	struct mGUIRunner runner = {
 		.params = {
@@ -346,6 +360,7 @@ int main(int argc, char* argv[]) {
 			_pollInput, _pollCursor,
 			0,
 			_guiPrepare, 0,
+			_keyboardRun,
 		},
 		.keySources = (struct GUIInputKeys[]) {
 			{
@@ -452,12 +467,37 @@ int main(int argc, char* argv[]) {
 				},
 				.nKeys = 32
 			},
+#ifdef WIIDRC
+			{
+				.name = "Wii U GamePad Input",
+				.id = DRC_INPUT,
+				.keyNames = (const char*[]) {
+					0, // Sync
+					"\1\xE",
+					"-",
+					"+",
+					"R",
+					"L",
+					"ZR",
+					"ZL",
+					"Down",
+					"Up",
+					"Right",
+					"Left",
+					"Y",
+					"X",
+					"B",
+					"A",
+				},
+				.nKeys = 16
+			},
+#endif
 			{ .id = 0 }
 		},
 		.configExtra = (struct GUIMenuItem[]) {
 			{
 				.title = "Video mode",
-				.data = "videoMode",
+				.data = GUI_V_S("videoMode"),
 				.submenu = 0,
 				.state = 0,
 				.validStates = (const char*[]) {
@@ -470,7 +510,7 @@ int main(int argc, char* argv[]) {
 			},
 			{
 				.title = "Screen mode",
-				.data = "screenMode",
+				.data = GUI_V_S("screenMode"),
 				.submenu = 0,
 				.state = 0,
 				.validStates = (const char*[]) {
@@ -481,7 +521,7 @@ int main(int argc, char* argv[]) {
 			},
 			{
 				.title = "Filtering",
-				.data = "filter",
+				.data = GUI_V_S("filter"),
 				.submenu = 0,
 				.state = 0,
 				.validStates = (const char*[]) {
@@ -493,7 +533,7 @@ int main(int argc, char* argv[]) {
 			},
 			{
 				.title = "Horizontal stretch",
-				.data = "stretchWidth",
+				.data = GUI_V_S("stretchWidth"),
 				.submenu = 0,
 				.state = 7,
 				.validStates = (const char*[]) {
@@ -513,7 +553,7 @@ int main(int argc, char* argv[]) {
 			},
 			{
 				.title = "Vertical stretch",
-				.data = "stretchHeight",
+				.data = GUI_V_S("stretchHeight"),
 				.submenu = 0,
 				.state = 6,
 				.validStates = (const char*[]) {
@@ -531,8 +571,26 @@ int main(int argc, char* argv[]) {
 				},
 				.nStates = 8
 			},
+			{
+				.title = "Gyroscope sensitivity",
+				.data = GUI_V_S("gyroSensitivity"),
+				.submenu = 0,
+				.state = 0,
+				.validStates = (const char*[]) {
+					"1x", "1x flipped", "2x", "2x flipped", "1/2x", "1/2x flipped"
+				},
+				.stateMappings = (const struct GUIVariant[]) {
+					GUI_V_F(1.f),
+					GUI_V_F(-1.f),
+					GUI_V_F(2.f),
+					GUI_V_F(-2.f),
+					GUI_V_F(0.5f),
+					GUI_V_F(-0.5f),
+				},
+				.nStates = 6
+			},
 		},
-		.nConfigExtra = 5,
+		.nConfigExtra = 6,
 		.setup = _setup,
 		.teardown = 0,
 		.gameLoaded = _gameLoaded,
@@ -547,6 +605,9 @@ int main(int argc, char* argv[]) {
 	};
 	mGUIInit(&runner, "wii");
 	reconfigureScreen(&runner);
+
+	// XXX
+	params = &runner.params;
 
 	// Make sure screen is properly initialized by drawing a blank frame
 	_drawStart();
@@ -576,6 +637,15 @@ int main(int argc, char* argv[]) {
 	_mapKey(&runner.params.keyMap, CLASSIC_INPUT, WPAD_CLASSIC_BUTTON_LEFT, GUI_INPUT_LEFT);
 	_mapKey(&runner.params.keyMap, CLASSIC_INPUT, WPAD_CLASSIC_BUTTON_RIGHT, GUI_INPUT_RIGHT);
 
+#ifdef WIIDRC
+	_mapKey(&runner.params.keyMap, DRC_INPUT, WIIDRC_BUTTON_A, GUI_INPUT_SELECT);
+	_mapKey(&runner.params.keyMap, DRC_INPUT, WIIDRC_BUTTON_B, GUI_INPUT_BACK);
+	_mapKey(&runner.params.keyMap, DRC_INPUT, WIIDRC_BUTTON_X, GUI_INPUT_CANCEL);
+	_mapKey(&runner.params.keyMap, DRC_INPUT, WIIDRC_BUTTON_UP, GUI_INPUT_UP);
+	_mapKey(&runner.params.keyMap, DRC_INPUT, WIIDRC_BUTTON_DOWN, GUI_INPUT_DOWN);
+	_mapKey(&runner.params.keyMap, DRC_INPUT, WIIDRC_BUTTON_LEFT, GUI_INPUT_LEFT);
+	_mapKey(&runner.params.keyMap, DRC_INPUT, WIIDRC_BUTTON_RIGHT, GUI_INPUT_RIGHT);
+#endif
 
 	float stretch = 0;
 	if (mCoreConfigGetFloatValue(&runner.config, "stretchWidth", &stretch)) {
@@ -586,10 +656,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	if (argc > 1) {
-		size_t i;
-		for (i = 0; runner.keySources[i].id; ++i) {
-			mInputMapLoad(&runner.params.keyMap, runner.keySources[i].id, mCoreConfigGetInput(&runner.config));
-		}
+		mGUILoadInputMaps(&runner);
 		mGUIRun(&runner, argv[1]);
 	} else {
 		mGUIRunloop(&runner);
@@ -598,6 +665,9 @@ int main(int argc, char* argv[]) {
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
 	mGUIDeinit(&runner);
+
+	mAudioResamplerDeinit(&resampler);
+	mAudioBufferDeinit(&audioBuffer);
 
 	free(fifo);
 	free(texmem);
@@ -614,43 +684,52 @@ int main(int argc, char* argv[]) {
 }
 
 static void _audioDMA(void) {
-	struct AudioBuffer* buffer = &audioBuffer[currentAudioBuffer];
-	if (buffer->size != SAMPLES) {
+	struct AudioBuffer* buffer = &audioBuffers[currentAudioBuffer];
+	if (!buffer->full) {
+		printf("Recv %i %i%s", currentAudioBuffer, buffer->full, buffer->full ? "" : "!");
 		return;
 	}
-	DCFlushRange(buffer->samples, SAMPLES * sizeof(struct GBAStereoSample));
-	AUDIO_InitDMA((u32) buffer->samples, SAMPLES * sizeof(struct GBAStereoSample));
-	buffer->size = 0;
+	DCFlushRange(buffer->samples, SAMPLES * sizeof(struct mStereoSample));
+	AUDIO_InitDMA((u32) buffer->samples, SAMPLES * sizeof(struct mStereoSample));
+	buffer->full = false;
 	currentAudioBuffer = (currentAudioBuffer + 1) % BUFFERS;
 }
 
-static void _postAudioBuffer(struct mAVStream* stream, blip_t* left, blip_t* right) {
+static void _postAudioBuffer(struct mAVStream* stream, struct mAudioBuffer* buf) {
 	UNUSED(stream);
-
+	UNUSED(buf);
+	mAudioResamplerProcess(&resampler);
 	u32 level = 0;
+	bool gotAudio = false;
 	_CPU_ISR_Disable(level);
-	struct AudioBuffer* buffer = &audioBuffer[nextAudioBuffer];
-	int available = blip_samples_avail(left);
-	if (available + buffer->size > SAMPLES) {
-		available = SAMPLES - buffer->size;
-	}
-	if (available > 0) {
-		// These appear to be reversed for AUDIO_InitDMA
-		blip_read_samples(left, &buffer->samples[buffer->size].right, available, true);
-		blip_read_samples(right, &buffer->samples[buffer->size].left, available, true);
-		buffer->size += available;
-	}
-	if (buffer->size == SAMPLES) {
-		int next = (nextAudioBuffer + 1) % BUFFERS;
-		if ((currentAudioBuffer + BUFFERS - next) % BUFFERS != 1) {
-			nextAudioBuffer = next;
+	while (mAudioBufferAvailable(&audioBuffer) >= SAMPLES) {
+		struct AudioBuffer* buffer = &audioBuffers[nextAudioBuffer];
+		if (buffer->full) {
+			printf("Send %i %i%s", nextAudioBuffer, buffer->full, buffer->full ? "!!" : "");
+			break;
 		}
-		if (!AUDIO_GetDMAEnableFlag()) {
-			_audioDMA();
-			AUDIO_StartDMA();
-		}
+		mAudioBufferRead(&audioBuffer, buffer->samples, SAMPLES);
+		buffer->full = true;
+		nextAudioBuffer = (nextAudioBuffer + 1) % BUFFERS;
+		gotAudio = true;
+	}
+	if (gotAudio && !AUDIO_GetDMAEnableFlag()) {
+		_audioDMA();
+		AUDIO_StartDMA();
 	}
 	_CPU_ISR_Restore(level);
+}
+
+static void _audioRateChanged(struct mAVStream* stream, unsigned sampleRate) {
+	UNUSED(stream);
+	if (!sampleRate) {
+		return;
+	}
+	if (!resampler.source || !resampler.destination) {
+		return;
+	}
+	mAudioResamplerProcess(&resampler);
+	mAudioResamplerSetSource(&resampler, resampler.source, sampleRate / fpsRatio, true);
 }
 
 static void _drawStart(void) {
@@ -701,29 +780,48 @@ static uint32_t _pollInput(const struct mInputMap* map) {
 	u32 ext = 0;
 	WPAD_Probe(0, &ext);
 
+#ifdef WIIDRC
+	u32 drckeys = 0;
+	if (WiiDRC_ScanPads()) {
+		drckeys = WiiDRC_ButtonsHeld();
+	}
+#endif
+
 	int keys = 0;
 	keys |= mInputMapKeyBits(map, GCN1_INPUT, padkeys, 0);
 	keys |= mInputMapKeyBits(map, GCN2_INPUT, padkeys, 0);
 	keys |= mInputMapKeyBits(map, WIIMOTE_INPUT, wiiPad, 0);
+#ifdef WIIDRC
+	keys |= mInputMapKeyBits(map, DRC_INPUT, drckeys, 0);
+#endif
 	if (ext == WPAD_EXP_CLASSIC) {
 		keys |= mInputMapKeyBits(map, CLASSIC_INPUT, wiiPad, 0);
 	}
 	int x = PAD_StickX(0);
 	int y = PAD_StickY(0);
-	int w_x = WPAD_StickX(0, 0);
-	int w_y = WPAD_StickY(0, 0);
-	if (x < -ANALOG_DEADZONE || w_x < -ANALOG_DEADZONE) {
+	int wX = WPAD_StickX(0, 0);
+	int wY = WPAD_StickY(0, 0);
+	ATTRIBUTE_UNUSED int drcX = 0;
+	ATTRIBUTE_UNUSED int drcY = 0;
+#ifdef WIIDRC
+	if (WiiDRC_Connected()) {
+		drcX = WiiDRC_lStickX();
+		drcY = WiiDRC_lStickY();
+	}
+#endif
+	if (x < -ANALOG_DEADZONE || wX < -ANALOG_DEADZONE || drcX < -ANALOG_DEADZONE) {
 		keys |= 1 << GUI_INPUT_LEFT;
 	}
-	if (x > ANALOG_DEADZONE || w_x > ANALOG_DEADZONE) {
+	if (x > ANALOG_DEADZONE || wX > ANALOG_DEADZONE || drcX > ANALOG_DEADZONE) {
 		keys |= 1 << GUI_INPUT_RIGHT;
 	}
-	if (y < -ANALOG_DEADZONE || w_y < -ANALOG_DEADZONE) {
+	if (y < -ANALOG_DEADZONE || wY < -ANALOG_DEADZONE || drcY < -ANALOG_DEADZONE) {
 		keys |= 1 << GUI_INPUT_DOWN;
 	}
-	if (y > ANALOG_DEADZONE || w_y > ANALOG_DEADZONE) {
+	if (y > ANALOG_DEADZONE || wY > ANALOG_DEADZONE || drcY > ANALOG_DEADZONE) {
 		keys |= 1 << GUI_INPUT_UP;
 	}
+
 	return keys;
 }
 
@@ -762,6 +860,509 @@ void _reproj2(int w, int h) {
 void _guiPrepare(void) {
 	GX_SetNumTevStages(1);
 	_reproj2(vmode->fbWidth * guiScale * wAdjust, vmode->efbHeight * guiScale * hAdjust);
+}
+
+static const struct GUIKeyboard qwertyLower;
+static const struct GUIKeyboard qwertyUpper;
+static const struct GUIKeyboard symbols;
+
+static const struct GUIKeyboard qwertyLower = {
+	.rows = {
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "1", "1" },
+				{ "2", "2" },
+				{ "3", "3" },
+				{ "4", "4" },
+				{ "5", "5" },
+				{ "6", "6" },
+				{ "7", "7" },
+				{ "8", "8" },
+				{ "9", "9" },
+				{ "0", "0" },
+				{ "-", "-" },
+				{ "⌫", NULL, 2, GUI_KEYFUNC_BACKSPACE },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "q", "q" },
+				{ "w", "w" },
+				{ "e", "e" },
+				{ "r", "r" },
+				{ "t", "t" },
+				{ "y", "y" },
+				{ "u", "u" },
+				{ "i", "i" },
+				{ "o", "o" },
+				{ "p", "p" },
+				{ "[", "[" },
+				{ "]", "]" },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "a", "a" },
+				{ "s", "s" },
+				{ "d", "d" },
+				{ "f", "f" },
+				{ "g", "g" },
+				{ "h", "h" },
+				{ "j", "j" },
+				{ "k", "k" },
+				{ "l", "l" },
+				{ ";", ";" },
+				{ "'", "'" },
+				{ "\\", "\\" },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "z", "z" },
+				{ "x", "x" },
+				{ "c", "c" },
+				{ "v", "v" },
+				{ "b", "b" },
+				{ "n", "n" },
+				{ "m", "m" },
+				{ ",", "," },
+				{ ".", "." },
+				{ "/", "/" },
+				{ "←", NULL, 2, GUI_KEYFUNC_LEFT },
+				{ "→", NULL, 2, GUI_KEYFUNC_RIGHT },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "⇧", &qwertyUpper, 3, GUI_KEYFUNC_SHIFT_KB },
+				{ "!@#", &symbols, 3, GUI_KEYFUNC_CHANGE_KB },
+				{ "Space", " ", 10 },
+				{ "OK", NULL, 4, GUI_KEYFUNC_ENTER },
+				{ "Cancel", NULL, 4, GUI_KEYFUNC_CANCEL },
+				{}
+			}
+		},
+	},
+	.width = 24
+};
+
+static const struct GUIKeyboard qwertyUpper = {
+	.rows = {
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "1", "1" },
+				{ "2", "2" },
+				{ "3", "3" },
+				{ "4", "4" },
+				{ "5", "5" },
+				{ "6", "6" },
+				{ "7", "7" },
+				{ "8", "8" },
+				{ "9", "9" },
+				{ "0", "0" },
+				{ "_", "_" },
+				{ "⌫", NULL, 2, GUI_KEYFUNC_BACKSPACE },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "Q", "Q" },
+				{ "W", "W" },
+				{ "E", "E" },
+				{ "R", "R" },
+				{ "T", "T" },
+				{ "Y", "Y" },
+				{ "U", "U" },
+				{ "I", "I" },
+				{ "O", "O" },
+				{ "P", "P" },
+				{ "{", "}" },
+				{ "{", "}" },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "A", "A" },
+				{ "S", "S" },
+				{ "D", "D" },
+				{ "F", "F" },
+				{ "G", "G" },
+				{ "H", "H" },
+				{ "J", "J" },
+				{ "K", "K" },
+				{ "L", "L" },
+				{ ":", ":" },
+				{ "\"", "\"" },
+				{ "|", "|" },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "Z", "Z" },
+				{ "X", "X" },
+				{ "C", "C" },
+				{ "V", "V" },
+				{ "B", "B" },
+				{ "N", "N" },
+				{ "M", "M" },
+				{ "<", "<" },
+				{ ">", ">" },
+				{ "?", "?" },
+				{ "←", NULL, 2, GUI_KEYFUNC_LEFT },
+				{ "→", NULL, 2, GUI_KEYFUNC_RIGHT },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "⇪", &qwertyUpper, 3, GUI_KEYFUNC_CHANGE_KB },
+				{ "!@#", &symbols, 3, GUI_KEYFUNC_CHANGE_KB },
+				{ "Space", " ", 10 },
+				{ "OK", NULL, 4, GUI_KEYFUNC_ENTER },
+				{ "Cancel", NULL, 4, GUI_KEYFUNC_CANCEL },
+				{}
+			}
+		},
+	},
+	.width = 24
+};
+
+static const struct GUIKeyboard symbols = {
+	.rows = {
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "1", "1" },
+				{ "2", "2" },
+				{ "3", "3" },
+				{ "4", "4" },
+				{ "5", "5" },
+				{ "6", "6" },
+				{ "7", "7" },
+				{ "8", "8" },
+				{ "9", "9" },
+				{ "0", "0" },
+				{ "-", "-" },
+				{ "⌫", NULL, 2, GUI_KEYFUNC_BACKSPACE },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ ".", "." },
+				{ ",", "," },
+				{ ":", ":" },
+				{ ";", ";" },
+				{ "?", "?" },
+				{ "!", "!" },
+				{ "'", "'" },
+				{ "\"", "\"" },
+				{ "*", "*" },
+				{ "`", "`" },
+				{ "~", "~" },
+				{ "_", "_" },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "<", "<" },
+				{ ">", ">" },
+				{ "{", "{" },
+				{ "}", "}" },
+				{ "+", "+" },
+				{ "=", "=" },
+				{ "#", "#" },
+				{ "&", "&" },
+				{ "$", "$" },
+				{}
+			}
+		},
+		{
+			.offset = 0,
+			.keys = (struct GUIKey[]) {
+				{ "(", "(" },
+				{ ")", ")" },
+				{ "[", "[" },
+				{ "]", "]" },
+				{ "/", "/" },
+				{ "|", "|" },
+				{ "\\", "\\" },
+				{ "%", "%" },
+				{ "@", "@" },
+				{ "^", "^" },
+				{ "←", NULL, 2, GUI_KEYFUNC_LEFT },
+				{ "→", NULL, 2, GUI_KEYFUNC_RIGHT },
+				{}
+			}
+		},
+		{
+			.offset = 3,
+			.keys = (struct GUIKey[]) {
+				{ "abc", &qwertyLower, 3, GUI_KEYFUNC_CHANGE_KB },
+				{ "Space", " ", 10 },
+				{ "OK", NULL, 4, GUI_KEYFUNC_ENTER },
+				{ "Cancel", NULL, 4, GUI_KEYFUNC_CANCEL },
+				{}
+			}
+		},
+	},
+	.width = 24
+};
+
+static size_t _backspace(char* string, size_t position) {
+	size_t len = strlen(string);
+	if (position == 0) {
+		return position;
+	}
+	size_t newPos = position - 1;
+	char byte = string[newPos];
+	if (byte & 0x80) { // In a UTF-8 character
+		while (newPos > 0) {
+			--newPos;
+			if ((string[newPos] & 0xC0) != 0x80) {
+				// Found beginning of UTF-8 character
+				break;
+			}
+		}
+	}
+	if (len == position) {
+		string[newPos] = '\0';
+	} else if (position > 0 && position < len) {
+		memmove(&string[newPos], &string[position], len + 1 - position);
+	}
+	return newPos;
+}
+
+enum GUIKeyboardStatus _keyboardRun(struct GUIKeyboardParams* keyboard) {
+	GUIInvalidateKeys(params);
+	int curX = 0;
+	int curY = 0;
+	size_t position = strlen(keyboard->result);
+	const struct GUIKey* curKey = NULL;
+	const struct GUIKeyboard* currentKbd = &qwertyLower;
+	const struct GUIKeyboard* prevKbd = currentKbd;
+	bool tempKbd = false;
+	while (true) {
+		uint32_t newInput = 0;
+		GUIPollInput(params, &newInput, 0);
+		unsigned cx, cy;
+		enum GUICursorState cursor = GUIPollCursor(params, &cx, &cy);
+
+		if (newInput & (1 << GUI_INPUT_UP)) {
+			--curY;
+			if (curY < 0) {
+				curY = 4;
+			}
+			curKey = NULL;
+		}
+		if (newInput & (1 << GUI_INPUT_DOWN)) {
+			++curY;
+			if (curY > 4) {
+				curY = 0;
+			}
+			curKey = NULL;
+		}
+		if (newInput & (1 << GUI_INPUT_LEFT)) {
+			--curX;
+			if (curX < 0) {
+				curX = currentKbd->width / 2;
+			}
+			curKey = NULL;
+		}
+		if (newInput & (1 << GUI_INPUT_RIGHT)) {
+			if (curKey) {
+				curX += curKey->width ? (curKey->width + 1) / 2 : 1;
+			} else {
+				++curX;
+			}
+			if (curX >= currentKbd->width / 2) {
+				curX = 0;
+			}
+			curKey = NULL;
+		}
+		if (newInput & (1 << GUI_INPUT_BACK)) {
+			position = _backspace(keyboard->result, position);
+		}
+		if (newInput & (1 << GUI_INPUT_CANCEL)) {
+			return GUI_KEYBOARD_CANCEL;
+		}
+
+		params->drawStart();
+		if (params->guiPrepare) {
+			params->guiPrepare();
+		}
+
+		GUIFontPrint(params->font, 8, GUIFontHeight(params->font), GUI_ALIGN_LEFT, 0xFFFFFFFF, keyboard->title);
+
+		unsigned height = GUIFontHeight(params->font) * 2;
+		unsigned width = (GUIFontGlyphWidth(params->font, 'W') | 1) + 1; // Round up
+
+		unsigned originX = (params->width - (width + 32) / 2 * currentKbd->width) / 2;
+		unsigned originY = params->height / 2 - (height + 16);
+
+		bool cursorOverKey = false;
+
+		if (cx >= originX && cy >= originY) {
+			unsigned xOff = cx - originX;
+			unsigned yOff = cy - originY;
+			int row = yOff / (height + 16);
+			int x = xOff * 2 / (width + 32);
+			int accumX = 0;
+			if (row < 5 && x < currentKbd->width) {
+				x -= currentKbd->rows[row].offset;
+				accumX += currentKbd->rows[row].offset;
+				int col;
+				for (col = 0; currentKbd->rows[row].keys[col].name; ++col) {
+					const struct GUIKey* key = &currentKbd->rows[row].keys[col];
+					int w = key->width ? key->width : 2;
+					if (x < w) {
+						curX = accumX;
+						curY = row;
+						curKey = key;
+						cursorOverKey = cursor == GUI_CURSOR_CLICKED;
+						break;
+					}
+					x -= w;
+					accumX += w;
+				}
+			}
+		}
+
+		int row;
+		int col;
+		for (row = 0; row < 5; ++row) {
+			int y = originY + (height + 16) * row;
+			int x = currentKbd->rows[row].offset;
+			for (col = 0; currentKbd->rows[row].keys[col].name; ++col) {
+				const struct GUIKey* key = &currentKbd->rows[row].keys[col];
+				int w = key->width ? key->width : 2;
+				if (row == curY) {
+					if (curX >= x / 2 && curX < (x + w) / 2) {
+						curKey = key;
+					} else if (col == 0 && curX < x / 2) {
+						curKey = key;
+					} else if (!currentKbd->rows[row].keys[col + 1].name && curX >= x / 2) {
+						curKey = key;
+					}
+				}
+				if (key->name[0]) {
+					int xOff = originX + x * (width + 32) / 2;
+					if (curKey == key) {
+						curX = x / 2;
+						GUIFontDraw9Slice(params->font, xOff, y, (width + 4) * w, height + 12, 0xFFFFFFFF, GUI_9SLICE_FILLED);
+					} else {
+						uint32_t fill = 0xFF606060;
+						if (key->function != GUI_KEYFUNC_INPUT_DATA) {
+							fill = 0xFFD0D0D0;
+						}
+						GUIFontDraw9Slice(params->font, xOff - 2, y - 2, (width + 4) * w + 4, height + 16, fill, GUI_9SLICE_FILL_ONLY);
+					}
+					GUIFontPrint(params->font, originX + (x * 2 + w) * (width + 32) / 4, y + height * 3 / 4 + 1, GUI_ALIGN_HCENTER | GUI_ALIGN_VCENTER, 0xFFFFFFFF, key->name);
+				}
+				x += w;
+			}
+		}
+
+		if ((newInput & (1 << GUI_INPUT_SELECT) || cursorOverKey) && curKey) {
+			switch (curKey->function) {
+			case GUI_KEYFUNC_INPUT_DATA: {
+				size_t dataLen = strlen(curKey->data);
+				size_t followingLen = strlen(&keyboard->result[position]);
+				size_t copySize = followingLen;
+				if (position + copySize > keyboard->maxLen) {
+					copySize = keyboard->maxLen - position;
+				}
+				memmove(&keyboard->result[position + dataLen], &keyboard->result[position], copySize + 1);
+				copySize = dataLen;
+				if (position + copySize > keyboard->maxLen) {
+					copySize = keyboard->maxLen - position;
+				}
+				memcpy(&keyboard->result[position], curKey->data, copySize);
+				position += copySize;
+				if (tempKbd) {
+					tempKbd = false;
+					currentKbd = prevKbd;
+				}
+				break;
+			}
+			case GUI_KEYFUNC_BACKSPACE:
+				position = _backspace(keyboard->result, position);
+				break;
+			case GUI_KEYFUNC_SHIFT_KB:
+				tempKbd = true;
+				prevKbd = currentKbd;
+				currentKbd = curKey->data;
+				break;
+			case GUI_KEYFUNC_CHANGE_KB:
+				if (currentKbd == curKey->data) {
+					// Switching to itself  while temporary removes temporary status;
+					// then switching once more goes back to previous keyboard
+					if (!tempKbd) {
+						currentKbd = prevKbd;
+					}
+				} else {
+					currentKbd = curKey->data;
+				}
+				tempKbd = false;
+				break;
+			case GUI_KEYFUNC_ENTER:
+				return GUI_KEYBOARD_DONE;
+			case GUI_KEYFUNC_CANCEL:
+				return GUI_KEYBOARD_CANCEL;
+			case GUI_KEYFUNC_LEFT:
+				if (position > 0) {
+					--position;
+				}
+				break;
+			case GUI_KEYFUNC_RIGHT:
+				if (position < strlen(keyboard->result)) {
+					++position;
+				}
+				break;
+			}
+		}
+
+		int inputSize = keyboard->maxLen;
+		if (inputSize * width > params->width) {
+			inputSize = params->width / width - 2;
+		}
+		GUIFontDraw9Slice(params->font, (params->width - width * inputSize) / 2 - 8, height * 3, width * inputSize + 16, height + 8, 0xFFFFFFFF, GUI_9SLICE_EMPTY);
+		GUIFontPrint(params->font, (params->width - width * inputSize) / 2 + 8, height * 4 - 8, GUI_ALIGN_LEFT, 0xFFFFFFFF, keyboard->result);
+		unsigned cursorWidth = GUIFontSpanCountWidth(params->font, keyboard->result, position);
+		GUIFontDrawIcon(params->font, (params->width - width * inputSize) / 2 + 8 + cursorWidth, height * 4 - 4, GUI_ALIGN_HCENTER | GUI_ALIGN_BOTTOM, GUI_ORIENT_0, 0xFFFFFFFF, GUI_ICON_TEXT_CURSOR);
+
+		GUIDrawBattery(params);
+		GUIDrawClock(params);
+
+		if (cursor != GUI_CURSOR_NOT_PRESENT) {
+			GUIFontDrawIcon(params->font, cx, cy, GUI_ALIGN_HCENTER | GUI_ALIGN_TOP, GUI_ORIENT_0, 0xFFFFFFFF, GUI_ICON_CURSOR);
+		}
+
+		if (params->guiFinish) {
+			params->guiFinish();
+		}
+		params->drawEnd();
+	}
 }
 
 void _setup(struct mGUIRunner* runner) {
@@ -803,27 +1404,42 @@ void _setup(struct mGUIRunner* runner) {
 	_mapKey(&runner->core->inputMap, CLASSIC_INPUT, WPAD_CLASSIC_BUTTON_FULL_L, GBA_KEY_L);
 	_mapKey(&runner->core->inputMap, CLASSIC_INPUT, WPAD_CLASSIC_BUTTON_FULL_R, GBA_KEY_R);
 
+#ifdef WIIDRC
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_A, GBA_KEY_A);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_B, GBA_KEY_B);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_PLUS, GBA_KEY_START);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_MINUS, GBA_KEY_SELECT);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_UP, GBA_KEY_UP);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_DOWN, GBA_KEY_DOWN);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_LEFT, GBA_KEY_LEFT);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_RIGHT, GBA_KEY_RIGHT);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_L, GBA_KEY_L);
+	_mapKey(&runner->core->inputMap, DRC_INPUT, WIIDRC_BUTTON_R, GBA_KEY_R);
+#endif
+
 	struct mInputAxis desc = { GBA_KEY_RIGHT, GBA_KEY_LEFT, ANALOG_DEADZONE, -ANALOG_DEADZONE };
 	mInputBindAxis(&runner->core->inputMap, GCN1_INPUT, 0, &desc);
 	mInputBindAxis(&runner->core->inputMap, CLASSIC_INPUT, 0, &desc);
+	mInputBindAxis(&runner->core->inputMap, DRC_INPUT, 0, &desc);
 	desc = (struct mInputAxis) { GBA_KEY_UP, GBA_KEY_DOWN, ANALOG_DEADZONE, -ANALOG_DEADZONE };
 	mInputBindAxis(&runner->core->inputMap, GCN1_INPUT, 1, &desc);
 	mInputBindAxis(&runner->core->inputMap, CLASSIC_INPUT, 1, &desc);
+	mInputBindAxis(&runner->core->inputMap, DRC_INPUT, 1, &desc);
 
 	outputBuffer = memalign(32, TEX_W * TEX_H * BYTES_PER_PIXEL);
 	runner->core->setVideoBuffer(runner->core, outputBuffer, TEX_W);
 
 	nextAudioBuffer = 0;
 	currentAudioBuffer = 0;
-	int i;
-	for (i = 0; i < BUFFERS; ++i) {
-		audioBuffer[i].size = 0;
-	}
+	memset(audioBuffers, 0, sizeof(audioBuffers));
 	runner->core->setAudioBufferSize(runner->core, SAMPLES);
 
-	double ratio = GBAAudioCalculateRatio(1, audioSampleRate, 1);
-	blip_set_rates(runner->core->getAudioChannel(runner->core, 0), runner->core->frequency(runner->core), 48000 * ratio);
-	blip_set_rates(runner->core->getAudioChannel(runner->core, 1), runner->core->frequency(runner->core), 48000 * ratio);
+	fpsRatio = mCoreCalculateFramerateRatio(runner->core, fps);
+	unsigned sampleRate = runner->core->audioSampleRate(runner->core);
+	if (!sampleRate) {
+		sampleRate = 32768;
+	}
+	mAudioResamplerSetSource(&resampler, runner->core->getAudioBuffer(runner->core), sampleRate / fpsRatio, true);
 
 	frameLimiter = true;
 }
@@ -832,6 +1448,7 @@ void _gameUnloaded(struct mGUIRunner* runner) {
 	UNUSED(runner);
 	AUDIO_StopDMA();
 	frameLimiter = true;
+	mAudioBufferClear(&audioBuffer);
 	VIDEO_SetBlack(true);
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
@@ -839,7 +1456,7 @@ void _gameUnloaded(struct mGUIRunner* runner) {
 
 void _gameLoaded(struct mGUIRunner* runner) {
 	reconfigureScreen(runner);
-	if (runner->core->platform(runner->core) == PLATFORM_GBA && ((struct GBA*) runner->core->board)->memory.hw.devices & HW_GYRO) {
+	if (runner->core->platform(runner->core) == mPLATFORM_GBA && ((struct GBA*) runner->core->board)->memory.hw.devices & HW_GYRO) {
 		int i;
 		for (i = 0; i < 6; ++i) {
 			u32 result = WPAD_SetMotionPlus(0, 1);
@@ -877,9 +1494,11 @@ void _unpaused(struct mGUIRunner* runner) {
 		case FM_LINEAR_2x:
 		default:
 			GX_InitTexObjFilterMode(&tex, GX_NEAR, GX_NEAR);
+			GX_InitTexObjFilterMode(&interframeTex, GX_NEAR, GX_NEAR);
 			break;
 		case FM_LINEAR_1x:
 			GX_InitTexObjFilterMode(&tex, GX_LINEAR, GX_LINEAR);
+			GX_InitTexObjFilterMode(&interframeTex, GX_LINEAR, GX_LINEAR);
 			break;
 		}
 	}
@@ -898,6 +1517,7 @@ void _unpaused(struct mGUIRunner* runner) {
 	if (mCoreConfigGetFloatValue(&runner->config, "stretchHeight", &stretch)) {
 		hStretch = fminf(1.0f, fmaxf(0.5f, stretch));
 	}
+	mCoreConfigGetFloatValue(&runner->config, "gyroSensitivity", &gyroSensitivity);
 }
 
 void _prepareForFrame(struct mGUIRunner* runner) {
@@ -907,7 +1527,7 @@ void _prepareForFrame(struct mGUIRunner* runner) {
 }
 
 void _drawFrame(struct mGUIRunner* runner, bool faded) {
-	runner->core->desiredVideoDimensions(runner->core, &corew, &coreh);
+	runner->core->currentVideoSize(runner->core, &corew, &coreh);
 	uint32_t color = 0xFFFFFF3F;
 	if (!faded) {
 		color |= 0xC0;
@@ -1031,9 +1651,18 @@ uint16_t _pollGameInput(struct mGUIRunner* runner) {
 	u32 wiiPad = WPAD_ButtonsHeld(0);
 	u32 ext = 0;
 	WPAD_Probe(0, &ext);
+#ifdef WIIDRC
+	u32 drckeys = 0;
+	if (WiiDRC_ScanPads()) {
+		drckeys = WiiDRC_ButtonsHeld();
+	}
+#endif
 	uint16_t keys = mInputMapKeyBits(&runner->core->inputMap, GCN1_INPUT, padkeys, 0);
 	keys |= mInputMapKeyBits(&runner->core->inputMap, GCN2_INPUT, padkeys, 0);
 	keys |= mInputMapKeyBits(&runner->core->inputMap, WIIMOTE_INPUT, wiiPad, 0);
+#ifdef WIIDRC
+	keys |= mInputMapKeyBits(&runner->core->inputMap, DRC_INPUT, drckeys, 0);
+#endif
 
 	enum GBAKey angles = mInputMapAxis(&runner->core->inputMap, GCN1_INPUT, 0, PAD_StickX(0));
 	if (angles != GBA_KEY_NONE) {
@@ -1054,6 +1683,19 @@ uint16_t _pollGameInput(struct mGUIRunner* runner) {
 			keys |= 1 << angles;
 		}
 	}
+#ifdef WIIDRC
+	if (WiiDRC_Connected()) {
+		keys |= mInputMapKeyBits(&runner->core->inputMap, DRC_INPUT, drckeys, 0);
+		angles = mInputMapAxis(&runner->core->inputMap, DRC_INPUT, 0, WiiDRC_lStickX());
+		if (angles != GBA_KEY_NONE) {
+			keys |= 1 << angles;
+		}
+		angles = mInputMapAxis(&runner->core->inputMap, DRC_INPUT, 1, WiiDRC_lStickY());
+		if (angles != GBA_KEY_NONE) {
+			keys |= 1 << angles;
+		}
+	}
+#endif
 
 	return keys;
 }
@@ -1071,15 +1713,18 @@ void _incrementScreenMode(struct mGUIRunner* runner) {
 	case FM_LINEAR_2x:
 	default:
 		GX_InitTexObjFilterMode(&tex, GX_NEAR, GX_NEAR);
+		GX_InitTexObjFilterMode(&interframeTex, GX_NEAR, GX_NEAR);
 		break;
 	case FM_LINEAR_1x:
 		GX_InitTexObjFilterMode(&tex, GX_LINEAR, GX_LINEAR);
+		GX_InitTexObjFilterMode(&interframeTex, GX_LINEAR, GX_LINEAR);
 		break;
 	}
 }
 
-void _setRumble(struct mRumble* rumble, int enable) {
+void _setRumble(struct mRumble* rumble, bool enable, uint32_t sinceLast) {
 	UNUSED(rumble);
+	UNUSED(sinceLast);
 	WPAD_Rumble(0, enable);
 	if (enable) {
 		PAD_ControlMotor(0, PAD_MOTOR_RUMBLE);
@@ -1103,7 +1748,7 @@ void _sampleRotation(struct mRotationSource* source) {
 		return;
 	}
 	gyroZ = exp.mp.rz - 0x1FA0;
-	gyroZ <<= 18;
+	gyroZ <<= 17;
 }
 
 int32_t _readTiltX(struct mRotationSource* source) {
@@ -1118,7 +1763,7 @@ int32_t _readTiltY(struct mRotationSource* source) {
 
 int32_t _readGyroZ(struct mRotationSource* source) {
 	UNUSED(source);
-	return gyroZ;
+	return gyroZ * gyroSensitivity;
 }
 
 static s8 WPAD_StickX(u8 chan, u8 right) {

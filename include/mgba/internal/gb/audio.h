@@ -10,7 +10,11 @@
 
 CXX_GUARD_START
 
+#include <mgba/core/interface.h>
 #include <mgba/core/timing.h>
+#include <mgba-util/audio-buffer.h>
+
+#define GB_MAX_SAMPLES 32
 
 DECL_BITFIELD(GBAudioRegisterDuty, uint8_t);
 DECL_BITS(GBAudioRegisterDuty, Length, 0, 6);
@@ -87,7 +91,6 @@ struct GBAudioSquareControl {
 	int frequency;
 	int length;
 	bool stop;
-	int hi;
 };
 
 struct GBAudioSweep {
@@ -104,6 +107,8 @@ struct GBAudioSquareChannel {
 	struct GBAudioSweep sweep;
 	struct GBAudioEnvelope envelope;
 	struct GBAudioSquareControl control;
+	int32_t lastUpdate;
+	uint8_t index;
 	int8_t sample;
 };
 
@@ -112,6 +117,7 @@ struct GBAudioWaveChannel {
 	bool bank;
 	bool enable;
 
+	int8_t sample;
 	unsigned length;
 	int volume;
 
@@ -124,7 +130,7 @@ struct GBAudioWaveChannel {
 		uint32_t wavedata32[8];
 		uint8_t wavedata8[16];
 	};
-	int8_t sample;
+	int32_t nextUpdate;
 };
 
 struct GBAudioNoiseChannel {
@@ -161,14 +167,9 @@ struct GBAudio {
 	struct GBAudioWaveChannel ch3;
 	struct GBAudioNoiseChannel ch4;
 
-	struct blip_t* left;
-	struct blip_t* right;
-	int16_t lastLeft;
-	int16_t lastRight;
+	struct mAudioBuffer buffer;
 	int32_t capLeft;
 	int32_t capRight;
-	int clock;
-	int32_t clockRate;
 
 	uint8_t volumeRight;
 	uint8_t volumeLeft;
@@ -193,12 +194,11 @@ struct GBAudio {
 	int32_t sampleInterval;
 	enum GBAudioStyle style;
 
+	int32_t lastSample;
+	int sampleIndex;
+	struct mStereoSample currentSamples[GB_MAX_SAMPLES];
+
 	struct mTimingEvent frameEvent;
-	struct mTimingEvent ch1Event;
-	struct mTimingEvent ch2Event;
-	struct mTimingEvent ch3Event;
-	struct mTimingEvent ch3Fade;
-	struct mTimingEvent ch4Event;
 	struct mTimingEvent sampleEvent;
 	bool enable;
 
@@ -239,7 +239,8 @@ void GBAudioWriteNR50(struct GBAudio* audio, uint8_t);
 void GBAudioWriteNR51(struct GBAudio* audio, uint8_t);
 void GBAudioWriteNR52(struct GBAudio* audio, uint8_t);
 
-void GBAudioUpdateFrame(struct GBAudio* audio, struct mTiming* timing);
+void GBAudioRun(struct GBAudio* audio, int32_t timestamp, int channels);
+void GBAudioUpdateFrame(struct GBAudio* audio);
 
 void GBAudioSamplePSG(struct GBAudio* audio, int16_t* left, int16_t* right);
 

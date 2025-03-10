@@ -10,6 +10,8 @@
 
 CXX_GUARD_START
 
+#include <mgba/core/core.h>
+
 #include <mgba-util/circle-buffer.h>
 
 #define mVL_MAX_CHANNELS 32
@@ -33,6 +35,8 @@ enum mVideoLoggerEvent {
 	LOGGER_EVENT_DEINIT,
 	LOGGER_EVENT_RESET,
 	LOGGER_EVENT_GET_PIXELS,
+	LOGGER_EVENT_LOAD_STATE,
+	LOGGER_EVENT_SAVE_STATE,
 };
 
 enum mVideoLoggerInjectionPoint {
@@ -55,6 +59,7 @@ struct mVideoLogger {
 	void* dataContext;
 
 	bool block;
+	bool waitOnFlush;
 	void (*init)(struct mVideoLogger*);
 	void (*deinit)(struct mVideoLogger*);
 	void (*reset)(struct mVideoLogger*);
@@ -82,6 +87,10 @@ struct mVideoLogger {
 
 	const void* pixelBuffer;
 	size_t pixelStride;
+
+	void* stateBuffer;
+	size_t stateSize;
+	bool stateStatus;
 };
 
 void mVideoLoggerRendererCreate(struct mVideoLogger* logger, bool readonly);
@@ -115,7 +124,7 @@ void mVideoLogContextSetOutput(struct mVideoLogContext*, struct VFile*);
 void mVideoLogContextWriteHeader(struct mVideoLogContext*, struct mCore* core);
 
 bool mVideoLogContextLoad(struct mVideoLogContext*, struct VFile*);
-void mVideoLogContextDestroy(struct mCore* core, struct mVideoLogContext*);
+void mVideoLogContextDestroy(struct mCore* core, struct mVideoLogContext*, bool closeVF);
 
 void mVideoLogContextRewind(struct mVideoLogContext*, struct mCore*);
 void* mVideoLogContextInitialState(struct mVideoLogContext*, size_t* size);
@@ -128,6 +137,7 @@ void mVideoLoggerInjectVideoRegister(struct mVideoLogger* logger, uint32_t addre
 void mVideoLoggerInjectPalette(struct mVideoLogger* logger, uint32_t address, uint16_t value);
 void mVideoLoggerInjectOAM(struct mVideoLogger* logger, uint32_t address, uint16_t value);
 
+enum mPlatform mVideoLogIsCompatible(struct VFile*);
 struct mCore* mVideoLogCoreFind(struct VFile*);
 
 CXX_GUARD_END

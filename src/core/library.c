@@ -6,6 +6,7 @@
 #include <mgba/core/library.h>
 
 #include <mgba/core/core.h>
+#include <mgba-util/string.h>
 #include <mgba-util/vfs.h>
 
 #ifdef USE_SQLITE3
@@ -42,7 +43,7 @@ struct mLibrary {
 
 static void _mLibraryDeleteEntry(struct mLibrary* library, struct mLibraryEntry* entry);
 static void _mLibraryInsertEntry(struct mLibrary* library, struct mLibraryEntry* entry);
-static void _mLibraryAddEntry(struct mLibrary* library, const char* filename, const char* base, struct VFile* vf);
+static bool _mLibraryAddEntry(struct mLibrary* library, const char* filename, const char* base, struct VFile* vf);
 
 static void _bindConstraints(sqlite3_stmt* statement, const struct mLibraryEntry* constraints) {
 	if (!constraints) {
@@ -85,7 +86,7 @@ static void _bindConstraints(sqlite3_stmt* statement, const struct mLibraryEntry
 		sqlite3_bind_text(statement, index, constraints->internalCode, -1, SQLITE_TRANSIENT);
 	}
 
-	if (constraints->platform != PLATFORM_NONE) {
+	if (constraints->platform != mPLATFORM_NONE) {
 		useIndex = sqlite3_bind_parameter_index(statement, ":usePlatform");
 		index = sqlite3_bind_parameter_index(statement, ":platform");
 		sqlite3_bind_int(statement, useIndex, 1);
@@ -199,6 +200,10 @@ error:
 }
 
 void mLibraryDestroy(struct mLibrary* library) {
+	if (!library) {
+		return;
+	}
+
 	sqlite3_finalize(library->insertPath);
 	sqlite3_finalize(library->insertRom);
 	sqlite3_finalize(library->insertRoot);
@@ -212,7 +217,7 @@ void mLibraryDestroy(struct mLibrary* library) {
 	free(library);
 }
 
-void mLibraryLoadDirectory(struct mLibrary* library, const char* base) {
+void mLibraryLoadDirectory(struct mLibrary* library, const char* base, bool recursive) {
 	struct VDir* dir = VDirOpenArchive(base);
 	if (!dir) {
 		dir = VDirOpen(base);
@@ -239,53 +244,68 @@ void mLibraryLoadDirectory(struct mLibrary* library, const char* base) {
 		struct VFile* vf = dir->openFile(dir, current->filename, O_RDONLY);
 		_mLibraryDeleteEntry(library, current);
 		if (!vf) {
+			mLibraryEntryFree(current);
 			continue;
 		}
 		_mLibraryAddEntry(library, current->filename, base, vf);
+		mLibraryEntryFree(current);
 	}
 	mLibraryListingDeinit(&entries);
 
 	dir->rewind(dir);
 	struct VDirEntry* dirent = dir->listNext(dir);
 	while (dirent) {
-		struct VFile* vf = dir->openFile(dir, dirent->name(dirent), O_RDONLY);
-		if (!vf) {
-			dirent = dir->listNext(dir);
-			continue;
+		const char* name = dirent->name(dirent);
+		struct VFile* vf = dir->openFile(dir, name, O_RDONLY);
+		bool wasAdded = false;
+
+		if (vf) {
+			wasAdded = _mLibraryAddEntry(library, name, base, vf);
 		}
-		_mLibraryAddEntry(library, dirent->name(dirent), base, vf);
+		if (!wasAdded && name[0] != '.') {
+			char newBase[PATH_MAX];
+			snprintf(newBase, sizeof(newBase), "%s" PATH_SEP "%s", base, name);
+
+			if (recursive) {
+				mLibraryLoadDirectory(library, newBase, recursive);
+			} else if (dirent->type(dirent) == VFS_FILE) {
+				mLibraryLoadDirectory(library, newBase, true); // This will add as an archive
+			}
+		}
 		dirent = dir->listNext(dir);
 	}
 	dir->close(dir);
 	sqlite3_exec(library->db, "COMMIT;", NULL, NULL, NULL);
 }
 
-void _mLibraryAddEntry(struct mLibrary* library, const char* filename, const char* base, struct VFile* vf) {
-	struct mCore* core;
+bool _mLibraryAddEntry(struct mLibrary* library, const char* filename, const char* base, struct VFile* vf) {
 	if (!vf) {
-		return;
+		return false;
 	}
-	core = mCoreFindVF(vf);
-	if (core) {
-		struct mLibraryEntry entry;
-		memset(&entry, 0, sizeof(entry));
-		core->init(core);
-		core->loadROM(core, vf);
-
-		core->getGameTitle(core, entry.internalTitle);
-		core->getGameCode(core, entry.internalCode);
-		core->checksum(core, &entry.crc32, CHECKSUM_CRC32);
-		entry.platform = core->platform(core);
-		entry.title = NULL;
-		entry.base = base;
-		entry.filename = filename;
-		entry.filesize = vf->size(vf);
-		_mLibraryInsertEntry(library, &entry);
-		// Note: this destroys the VFile
-		core->deinit(core);
-	} else {
+	struct mCore* core = mCoreFindVF(vf);
+	if (!core) {
 		vf->close(vf);
+		return false;
 	}
+	struct mLibraryEntry entry;
+	memset(&entry, 0, sizeof(entry));
+	core->init(core);
+	core->loadROM(core, vf);
+
+	struct mGameInfo info;
+	core->getGameInfo(core, &info);
+	snprintf(entry.internalCode, sizeof(entry.internalCode), "%s-%s", info.system, info.code);
+	strlcpy(entry.internalTitle, info.title, sizeof(entry.internalTitle));
+	core->checksum(core, &entry.crc32, mCHECKSUM_CRC32);
+	entry.platform = core->platform(core);
+	entry.title = NULL;
+	entry.base = base;
+	entry.filename = filename;
+	entry.filesize = vf->size(vf);
+	_mLibraryInsertEntry(library, &entry);
+	// Note: this destroys the VFile
+	core->deinit(core);
+	return true;
 }
 
 static void _mLibraryInsertEntry(struct mLibrary* library, struct mLibraryEntry* entry) {
@@ -366,9 +386,12 @@ size_t mLibraryGetEntries(struct mLibrary* library, struct mLibraryListing* out,
 	sqlite3_reset(library->select);
 	_bindConstraints(library->select, constraints);
 
+	if (numEntries > SSIZE_MAX) {
+		numEntries = SSIZE_MAX;
+	}
 	int countIndex = sqlite3_bind_parameter_index(library->select, ":count");
 	int offsetIndex = sqlite3_bind_parameter_index(library->select, ":offset");
-	sqlite3_bind_int64(library->select, countIndex, numEntries ? numEntries : -1);
+	sqlite3_bind_int64(library->select, countIndex, numEntries ? (ssize_t) numEntries : -1);
 	sqlite3_bind_int64(library->select, offsetIndex, offset);
 
 	size_t entryIndex;
@@ -445,6 +468,11 @@ struct VFile* mLibraryOpenVFile(struct mLibrary* library, const struct mLibraryE
 			break;
 		}
 	}
+	for (i = 0; i < mLibraryListingSize(&entries); ++i) {
+		struct mLibraryEntry* e = mLibraryListingGetPointer(&entries, i);
+		mLibraryEntryFree(e);
+	}
+	mLibraryListingDeinit(&entries);
 	return vf;
 }
 

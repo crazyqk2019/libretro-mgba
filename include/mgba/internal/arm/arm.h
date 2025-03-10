@@ -70,7 +70,7 @@ struct ARMCore;
 
 union PSR {
 	struct {
-#if defined(__BIG_ENDIAN__)
+#ifdef __BIG_ENDIAN__
 		unsigned n : 1;
 		unsigned z : 1;
 		unsigned c : 1;
@@ -94,7 +94,7 @@ union PSR {
 	};
 
 	struct {
-#if defined(__BIG_ENDIAN__)
+#ifdef __BIG_ENDIAN__
 		uint8_t flags;
 		uint8_t status;
 		uint8_t extension;
@@ -134,6 +134,12 @@ struct ARMMemory {
 	void (*setActiveRegion)(struct ARMCore*, uint32_t address);
 };
 
+struct ARMCoprocessor {
+	int32_t (*mrc)(struct ARMCore*, int crn, int crm, int opcode1, int opcode2);
+	void (*mcr)(struct ARMCore*, int crn, int crm, int opcode1, int opcode2, int32_t value);
+	void (*cdp)(struct ARMCore*, int crn, int crm, int crd, int opcode1, int opcode2);
+};
+
 struct ARMInterruptHandler {
 	void (*reset)(struct ARMCore* cpu);
 	void (*processEvents)(struct ARMCore* cpu);
@@ -147,10 +153,21 @@ struct ARMInterruptHandler {
 	void (*hitStub)(struct ARMCore* cpu, uint32_t opcode);
 };
 
+#define ARM_REGISTER_FILE struct { \
+	int32_t gprs[16]; \
+	union PSR cpsr; \
+	union PSR spsr; \
+}
+
+struct ARMRegisterFile {
+	ARM_REGISTER_FILE;
+};
+
 struct ARMCore {
-	int32_t gprs[16];
-	union PSR cpsr;
-	union PSR spsr;
+	union {
+		struct ARMRegisterFile regs;
+		ARM_REGISTER_FILE;
+	};
 
 	int32_t cycles;
 	int32_t nextEvent;
@@ -168,12 +185,14 @@ struct ARMCore {
 
 	struct ARMMemory memory;
 	struct ARMInterruptHandler irqh;
+	struct ARMCoprocessor cp[16];
 
 	struct mCPUComponent* master;
 
 	size_t numComponents;
 	struct mCPUComponent** components;
 };
+#undef ARM_REGISTER_FILE
 
 void ARMInit(struct ARMCore* cpu);
 void ARMDeinit(struct ARMCore* cpu);

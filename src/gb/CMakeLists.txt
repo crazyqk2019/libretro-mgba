@@ -4,8 +4,15 @@ set(SOURCE_FILES
 	cheats.c
 	core.c
 	gb.c
+	input.c
 	io.c
 	mbc.c
+	mbc/huc-3.c
+	mbc/licensed.c
+	mbc/mbc.c
+	mbc/pocket-cam.c
+	mbc/tama5.c
+	mbc/unlicensed.c
 	memory.c
 	overrides.c
 	serialize.c
@@ -29,6 +36,7 @@ set(DEBUGGER_FILES
 
 set(TEST_FILES
 	test/core.c
+	test/gbx.c
 	test/mbc.c
 	test/memory.c
 	test/rtc.c)

@@ -66,12 +66,13 @@ private:
 			BACKGROUND,
 			WINDOW,
 			SPRITE,
-			BACKDROP
+			BACKDROP,
+			FRAME
 		} type = NONE;
 		int index = -1;
 
 		bool operator!=(const LayerId& other) const { return other.type != type || other.index != index; }
-		operator uint() const { return (type << 8) | index; }
+		operator uint() const { return (type << 12) | (index & 0xFFF); }
 		QString readable() const;
 	};
 
@@ -82,6 +83,7 @@ private:
 		QRegion mask;
 		QPointF location;
 		bool repeats;
+		bool fixed;
 	};
 
 	bool lookupLayer(const QPointF& coord, Layer*&);
@@ -95,7 +97,11 @@ private:
 	int m_glowFrame;
 	QTimer m_glowTimer;
 
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
+	QRecursiveMutex m_mutex;
+#else
 	QMutex m_mutex{QMutex::Recursive};
+#endif
 	VFile* m_currentFrame = nullptr;
 	VFile* m_nextFrame = nullptr;
 	mCore* m_vl = nullptr;
@@ -106,13 +112,9 @@ private:
 	QSet<LayerId> m_disabled;
 	QPixmap m_composited;
 	QPixmap m_rendered;
-	mMapCacheEntry m_mapStatus[4][128 * 128] = {}; // TODO: Correct size
+	QVector<mMapCacheEntry> m_mapStatus[4];
 	ColorPicker m_backdropPicker;
 	QColor m_overrideBackdrop;
-
-#ifdef M_CORE_GBA
-	uint16_t m_gbaDispcnt;
-#endif
 
 	std::shared_ptr<bool> m_callbackLocker{std::make_shared<bool>(true)};
 };

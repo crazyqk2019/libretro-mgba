@@ -5,11 +5,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "ShortcutView.h"
 
-#include "GamepadButtonEvent.h"
 #include "InputController.h"
+#include "input/GamepadButtonEvent.h"
 #include "ShortcutController.h"
 #include "ShortcutModel.h"
 
+#include <QFontMetrics>
 #include <QKeyEvent>
 
 using namespace QGBA;
@@ -53,6 +54,7 @@ void ShortcutView::setInputController(InputController* controller) {
 	}
 	m_input = controller;
 	m_input->stealFocus(this);
+	m_ui.keyEdit->setInputController(controller);
 }
 
 void ShortcutView::load(const QModelIndex& index) {
@@ -87,7 +89,7 @@ void ShortcutView::clear() {
 	QModelIndex index = m_ui.shortcutTable->selectionModel()->currentIndex();
 	QString name = m_model->name(index);
 	const Shortcut* item = m_controller->shortcut(name);
-	if (!item->action()) {
+	if (!item || !item->action()) {
 		return;
 	}
 	if (m_ui.gamepadButton->isChecked()) {
@@ -106,7 +108,7 @@ void ShortcutView::updateButton(int button) {
 	}
 	QString name = m_model->name(m_ui.shortcutTable->selectionModel()->currentIndex());
 	const Shortcut* item = m_controller->shortcut(name);
-	if (!item->action()) {
+	if (!item || !item->action()) {
 		return;
 	}
 	if (m_ui.gamepadButton->isChecked()) {
@@ -122,7 +124,7 @@ void ShortcutView::updateAxis(int axis, int direction) {
 	}
 	QString name = m_model->name(m_ui.shortcutTable->selectionModel()->currentIndex());
 	const Shortcut* item = m_controller->shortcut(name);
-	if (!item->action()) {
+	if (!item || !item->action()) {
 		return;
 	}
 	m_controller->updateAxis(name, axis, static_cast<GamepadAxisEvent::Direction>(direction));
@@ -132,6 +134,19 @@ void ShortcutView::closeEvent(QCloseEvent*) {
 	if (m_input) {
 		m_input->releaseFocus(this);
 	}
+}
+
+void ShortcutView::showEvent(QShowEvent*) {
+	QString longString("Ctrl+Alt+Shift+Tab");
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 11, 0))
+	int width = QFontMetrics(QFont()).horizontalAdvance(longString);
+#else
+	int width = QFontMetrics(QFont()).width(longString);
+#endif
+	QHeaderView* header = m_ui.shortcutTable->header();
+	header->resizeSection(0, header->length() - width * 2);
+	header->resizeSection(1, width);
+	header->resizeSection(2, width);
 }
 
 bool ShortcutView::event(QEvent* event) {

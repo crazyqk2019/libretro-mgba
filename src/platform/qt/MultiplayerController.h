@@ -5,10 +5,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #pragma once
 
-#include <QMutex>
+#include <QHash>
 #include <QList>
+#include <QMutex>
 #include <QObject>
 
+#include <mgba/core/core.h>
 #include <mgba/core/lockstep.h>
 #ifdef M_CORE_GBA
 #include <mgba/internal/gba/sio/lockstep.h>
@@ -37,39 +39,60 @@ public:
 	void detachGame(CoreController*);
 
 	int attached();
-	int playerId(CoreController*);
+	int playerId(CoreController*) const;
+	int saveId(CoreController*) const;
 
 signals:
 	void gameAttached();
 	void gameDetached();
 
 private:
+	union Node {
+		GBSIOLockstepNode* gb;
+		GBASIOLockstepDriver* gba;
+	};
 	struct Player {
-#ifdef M_CORE_GB
-		Player(CoreController* controller, GBSIOLockstepNode* node);
-#endif
-#ifdef M_CORE_GBA
-		Player(CoreController* controller, GBASIOLockstepNode* node);
-#endif
+		Player(CoreController* controller);
+
+		int id() const;
+		bool operator<(const Player&) const;
 
 		CoreController* controller;
-		GBSIOLockstepNode* gbNode = nullptr;
-		GBASIOLockstepNode* gbaNode = nullptr;
+		Node node = {nullptr};
 		int awake = 1;
 		int32_t cyclesPosted = 0;
 		unsigned waitMask = 0;
+		int saveId = 1;
+		int preferredId = 0;
+		bool attached = false;
 	};
+	struct LockstepUser : mLockstepThreadUser {
+		MultiplayerController* controller;
+		int pid;
+	};
+
+	Player* player(int id);
+	const Player* player(int id) const;
+	void fixOrder();
+
 	union {
 		mLockstep m_lockstep;
 #ifdef M_CORE_GB
 		GBSIOLockstep m_gbLockstep;
 #endif
-#ifdef M_CORE_GBA
-		GBASIOLockstep m_gbaLockstep;
-#endif
 	};
-	QList<Player> m_players;
+
+#ifdef M_CORE_GBA
+	GBASIOLockstepCoordinator m_gbaCoordinator;
+#endif
+
+	mPlatform m_platform = mPLATFORM_NONE;
+	int m_nextPid = 0;
+	int m_claimedIds = 0;
+	QHash<int, Player> m_pids;
+	QList<int> m_players;
 	QMutex m_lock;
+	QHash<QPair<QString, QString>, int> m_claimedSaves;
 };
 
 }

@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #pragma once
 
-#include "GamepadAxisEvent.h"
+#include "input/GamepadAxisEvent.h"
 
 #include <QWidget>
 
@@ -30,6 +30,7 @@ public:
 protected:
 	virtual bool event(QEvent*) override;
 	virtual void closeEvent(QCloseEvent*) override;
+	virtual void showEvent(QShowEvent*) override;
 
 private slots:
 	void load(const QModelIndex&);

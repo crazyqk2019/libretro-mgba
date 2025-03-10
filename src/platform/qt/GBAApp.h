@@ -7,16 +7,19 @@
 
 #include <QApplication>
 #include <QFileDialog>
+#include <QFont>
 #include <QList>
 #include <QMap>
 #include <QMultiMap>
-#include <QObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QRunnable>
 #include <QString>
 #include <QThreadPool>
 
 #include <functional>
 
+#include "ApplicationUpdater.h"
 #include "CoreManager.h"
 #include "MultiplayerController.h"
 
@@ -56,19 +59,36 @@ public:
 
 	static QString dataDir();
 
-	Window* newWindow();
+	QFont monospaceFont() { return m_monospace; }
 
-	QString getOpenFileName(QWidget* owner, const QString& title, const QString& filter = QString());
-	QString getSaveFileName(QWidget* owner, const QString& title, const QString& filter = QString());
-	QString getOpenDirectoryName(QWidget* owner, const QString& title);
+	QList<Window*> windows() { return m_windows; }
+
+	QString getOpenFileName(QWidget* owner, const QString& title, const QString& filter = {}, const QString& path = {});
+	QStringList getOpenFileNames(QWidget* owner, const QString& title, const QString& filter = {}, const QString& path = {});
+	QString getSaveFileName(QWidget* owner, const QString& title, const QString& filter = {}, const QString& path = {});
+	QString getOpenDirectoryName(QWidget* owner, const QString& title, const QString& path = {});
 
 	const NoIntroDB* gameDB() const { return m_db; }
 	bool reloadGameDB();
 
-	qint64 submitWorkerJob(std::function<void ()> job, std::function<void ()> callback = {});
-	qint64 submitWorkerJob(std::function<void ()> job, QObject* context, std::function<void ()> callback);
+	QNetworkAccessManager* netman();
+	QNetworkReply* httpGet(const QUrl&);
+
+	qint64 submitWorkerJob(std::function<void ()>&& job, std::function<void ()>&& callback = {});
+	qint64 submitWorkerJob(std::function<void ()>&& job, QObject* context, std::function<void ()>&& callback);
 	bool removeWorkerJob(qint64 jobId);
-	bool waitOnJob(qint64 jobId, QObject* context, std::function<void ()> callback);
+	bool waitOnJob(qint64 jobId, QObject* context, std::function<void ()>&& callback);
+
+	ApplicationUpdater* updater() { return &m_updater; }
+	QString invokeOnExit() { return m_invokeOnExit; }
+
+public slots:
+	void restartForUpdate();
+	Window* newWindow();
+
+	void suspendScreensaver();
+	void resumeScreensaver();
+	void setScreensaverSuspendable(bool);
 
 signals:
 	void jobFinished(qint64 jobId);
@@ -83,7 +103,7 @@ private slots:
 private:
 	class WorkerJob : public QRunnable {
 	public:
-		WorkerJob(qint64 id, std::function<void ()> job, GBAApp* owner);
+		WorkerJob(qint64 id, std::function<void ()>&& job, GBAApp* owner);
 
 	public:
 		void run() override;
@@ -96,6 +116,8 @@ private:
 
 	Window* newWindowInternal();
 
+	void cleanupAfterUpdate();
+
 	void pauseAll(QList<Window*>* paused);
 	void continueAll(const QList<Window*>& paused);
 
@@ -103,13 +125,19 @@ private:
 	QList<Window*> m_windows;
 	MultiplayerController m_multiplayer;
 	CoreManager m_manager;
+	ApplicationUpdater m_updater;
+	QString m_invokeOnExit;
 
 	QMap<qint64, WorkerJob*> m_workerJobs;
 	QMultiMap<qint64, QMetaObject::Connection> m_workerJobCallbacks;
 	QThreadPool m_workerThreads;
 	qint64 m_nextJob = 1;
 
+	QFont m_monospace;
+
 	NoIntroDB* m_db = nullptr;
+
+	QNetworkAccessManager m_netman;
 };
 
 }

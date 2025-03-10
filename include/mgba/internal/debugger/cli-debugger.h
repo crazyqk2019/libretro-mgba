@@ -73,20 +73,23 @@ struct CLIDebuggerBackend {
 
 	ATTRIBUTE_FORMAT(printf, 2, 3)
 	void (*printf)(struct CLIDebuggerBackend*, const char* fmt, ...);
+	int (*poll)(struct CLIDebuggerBackend*, int32_t timeoutMs);
 	const char* (*readline)(struct CLIDebuggerBackend*, size_t* len);
 	void (*lineAppend)(struct CLIDebuggerBackend*, const char* line);
 	const char* (*historyLast)(struct CLIDebuggerBackend*, size_t* len);
 	void (*historyAppend)(struct CLIDebuggerBackend*, const char* line);
+	void (*interrupt)(struct CLIDebuggerBackend*);
 };
 
 struct CLIDebugger {
-	struct mDebugger d;
+	struct mDebuggerModule d;
 
 	struct CLIDebuggerSystem* system;
 	struct CLIDebuggerBackend* backend;
 
 	int traceRemaining;
 	struct VFile* traceVf;
+	bool skipStatus;
 };
 
 void CLIDebuggerCreate(struct CLIDebugger*);
@@ -94,6 +97,11 @@ void CLIDebuggerAttachSystem(struct CLIDebugger*, struct CLIDebuggerSystem*);
 void CLIDebuggerAttachBackend(struct CLIDebugger*, struct CLIDebuggerBackend*);
 
 bool CLIDebuggerTabComplete(struct CLIDebugger*, const char* token, bool initial, size_t len);
+
+bool CLIDebuggerRunCommand(struct CLIDebugger* debugger, const char* line, size_t count);
+#ifdef ENABLE_SCRIPTING
+void CLIDebuggerScriptEngineInstall(struct mScriptBridge* sb);
+#endif
 
 CXX_GUARD_END
 

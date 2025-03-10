@@ -33,6 +33,7 @@ struct mCoreOptions {
 	int frameskip;
 	bool rewindEnable;
 	int rewindBufferCapacity;
+	int rewindBufferInterval;
 	float fpsTarget;
 	size_t audioBuffers;
 	unsigned sampleRate;
@@ -63,17 +64,23 @@ struct mCoreOptions {
 void mCoreConfigInit(struct mCoreConfig*, const char* port);
 void mCoreConfigDeinit(struct mCoreConfig*);
 
-#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
+#ifdef ENABLE_VFS
 bool mCoreConfigLoad(struct mCoreConfig*);
 bool mCoreConfigSave(const struct mCoreConfig*);
 bool mCoreConfigLoadPath(struct mCoreConfig*, const char* path);
 bool mCoreConfigSavePath(const struct mCoreConfig*, const char* path);
+bool mCoreConfigLoadVFile(struct mCoreConfig*, struct VFile* vf);
+bool mCoreConfigSaveVFile(const struct mCoreConfig*, struct VFile* vf);
 
-void mCoreConfigMakePortable(const struct mCoreConfig*);
+void mCoreConfigMakePortable(const struct mCoreConfig*, const char* path);
 void mCoreConfigDirectory(char* out, size_t outLength);
+void mCoreConfigPortableIniPath(char* out, size_t outLength);
+void mCoreConfigPortablePath(char* out, size_t outLength);
+bool mCoreConfigIsPortable(void);
 #endif
 
 const char* mCoreConfigGetValue(const struct mCoreConfig*, const char* key);
+bool mCoreConfigGetBoolValue(const struct mCoreConfig*, const char* key, bool* value);
 bool mCoreConfigGetIntValue(const struct mCoreConfig*, const char* key, int* value);
 bool mCoreConfigGetUIntValue(const struct mCoreConfig*, const char* key, unsigned* value);
 bool mCoreConfigGetFloatValue(const struct mCoreConfig*, const char* key, float* value);

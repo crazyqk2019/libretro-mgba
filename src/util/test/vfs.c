@@ -7,7 +7,7 @@
 
 #include <mgba-util/vfs.h>
 
-#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
+#ifdef ENABLE_VFS
 M_TEST_DEFINE(openNullPathR) {
 	struct VFile* vf = VFileOpen(NULL, O_RDONLY);
 	assert_null(vf);
@@ -84,7 +84,7 @@ M_TEST_DEFINE(resizeMem) {
 }
 
 M_TEST_DEFINE(resizeConstMem) {
-	uint8_t bytes[32];
+	uint8_t bytes[32] = {0};
 	struct VFile* vf = VFileFromConstMemory(bytes, 32);
 	assert_non_null(vf);
 	assert_int_equal(vf->size(vf), 32);
@@ -96,7 +96,7 @@ M_TEST_DEFINE(resizeConstMem) {
 }
 
 M_TEST_DEFINE(resizeMemChunk) {
-	uint8_t bytes[32];
+	uint8_t bytes[32] = {0};
 	struct VFile* vf = VFileMemChunk(bytes, 32);
 	assert_non_null(vf);
 	assert_int_equal(vf->size(vf), 32);
@@ -146,7 +146,7 @@ M_TEST_DEFINE(mapMemChunk) {
 }
 
 M_TEST_SUITE_DEFINE(VFS,
-#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
+#ifdef ENABLE_VFS
 	cmocka_unit_test(openNullPathR),
 	cmocka_unit_test(openNullPathW),
 	cmocka_unit_test(openNullPathCreate),

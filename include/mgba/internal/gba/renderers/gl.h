@@ -16,18 +16,16 @@ CXX_GUARD_START
 #include <mgba/internal/gba/renderers/common.h>
 #include <mgba/internal/gba/video.h>
 
-#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
+#ifdef BUILD_GLES3
 
 #ifdef USE_EPOXY
 #include <epoxy/gl.h>
-#elif defined(BUILD_GL)
-#ifdef __APPLE__
+#elif defined(__APPLE__)
 #include <OpenGL/gl3.h>
-#else
+#elif defined(BUILD_GL)
 #define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
 #include <GL/glext.h>
-#endif
 #else
 #include <GLES3/gl3.h>
 #endif
@@ -44,12 +42,12 @@ struct GBAVideoGLAffine {
 struct GBAVideoGLBackground {
 	GLuint fbo;
 	GLuint tex;
-	GLuint flags;
 
 	unsigned index;
 	int enabled;
 	unsigned priority;
 	uint32_t charBase;
+	uint32_t oldCharBase;
 	int mosaic;
 	int multipalette;
 	uint32_t screenBase;
@@ -61,6 +59,8 @@ struct GBAVideoGLBackground {
 	uint16_t y;
 	int32_t refx;
 	int32_t refy;
+	int32_t offsetX;
+	int32_t offsetY;
 
 	struct GBAVideoGLAffine affine;
 
@@ -80,8 +80,7 @@ enum {
 	GBA_GL_TEX_OBJ_COLOR = 0,
 	GBA_GL_TEX_OBJ_FLAGS,
 	GBA_GL_TEX_OBJ_DEPTH,
-	GBA_GL_TEX_BACKDROP_COLOR,
-	GBA_GL_TEX_BACKDROP_FLAGS,
+	GBA_GL_TEX_BACKDROP,
 	GBA_GL_TEX_WINDOW,
 	GBA_GL_TEX_MAX
 };
@@ -96,14 +95,15 @@ enum {
 	GBA_GL_BG_CHARBASE,
 	GBA_GL_BG_SIZE,
 	GBA_GL_BG_OFFSET,
-	GBA_GL_BG_INFLAGS,
 	GBA_GL_BG_TRANSFORM,
 	GBA_GL_BG_RANGE,
 	GBA_GL_BG_MOSAIC,
+	GBA_GL_BG_OLDCHARBASE,
 
 	GBA_GL_OBJ_VRAM = 2,
 	GBA_GL_OBJ_PALETTE,
 	GBA_GL_OBJ_CHARBASE,
+	GBA_GL_OBJ_TILE,
 	GBA_GL_OBJ_STRIDE,
 	GBA_GL_OBJ_LOCALPALETTE,
 	GBA_GL_OBJ_INFLAGS,
@@ -111,21 +111,24 @@ enum {
 	GBA_GL_OBJ_DIMS,
 	GBA_GL_OBJ_OBJWIN,
 	GBA_GL_OBJ_MOSAIC,
+	GBA_GL_OBJ_CYCLES,
 
 	GBA_GL_WIN_DISPCNT = 2,
 	GBA_GL_WIN_BLEND,
 	GBA_GL_WIN_FLAGS,
 	GBA_GL_WIN_WIN0,
 	GBA_GL_WIN_WIN1,
+	GBA_GL_WIN_CIRCLE0,
+	GBA_GL_WIN_CIRCLE1,
 
 	GBA_GL_FINALIZE_SCALE = 2,
 	GBA_GL_FINALIZE_LAYERS,
 	GBA_GL_FINALIZE_FLAGS,
 	GBA_GL_FINALIZE_WINDOW,
+	GBA_GL_FINALIZE_PALETTE,
 	GBA_GL_FINALIZE_BACKDROP,
-	GBA_GL_FINALIZE_BACKDROPFLAGS,
 
-	GBA_GL_UNIFORM_MAX = 12
+	GBA_GL_UNIFORM_MAX = 14
 };
 
 struct GBAVideoGLShader {
@@ -144,14 +147,20 @@ struct GBAVideoGLRenderer {
 	int oamMax;
 	bool oamDirty;
 	struct GBAVideoRendererSprite sprites[128];
+	int16_t objOffsetX;
+	int16_t objOffsetY;
 
 	GLuint fbo[GBA_GL_FBO_MAX];
 	GLuint layers[GBA_GL_TEX_MAX];
 	GLuint vbo;
 
 	GLuint outputTex;
+	bool outputTexDirty;
 
-	GLint shadowPalette[512];
+	GLuint paletteTex;
+	uint16_t shadowPalette[GBA_VIDEO_VERTICAL_PIXELS][512];
+	int nextPalette;
+	int paletteDirtyScanlines;
 	bool paletteDirty;
 
 	GLuint vramTex;
@@ -182,9 +191,12 @@ struct GBAVideoGLRenderer {
 		struct GBAVideoWindowRegion h;
 		struct GBAVideoWindowRegion v;
 		GBAWindowControl control;
+		int16_t offsetX;
+		int16_t offsetY;
 	} winN[2];
 
 	GLint winNHistory[2][GBA_VIDEO_VERTICAL_PIXELS * 4];
+	GLint spriteCycles[GBA_VIDEO_VERTICAL_PIXELS];
 
 	GBAWindowControl winout;
 	GBAWindowControl objwin;

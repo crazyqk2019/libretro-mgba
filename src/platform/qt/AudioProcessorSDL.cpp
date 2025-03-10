@@ -17,7 +17,7 @@ AudioProcessorSDL::AudioProcessorSDL(QObject* parent)
 }
 
 void AudioProcessorSDL::setInput(std::shared_ptr<CoreController> controller) {
-	AudioProcessor::setInput(controller);
+	AudioProcessor::setInput(std::move(controller));
 	if (m_audio.core && input()->core != m_audio.core) {
 		mSDLDeinitAudio(&m_audio);
 		mSDLInitAudio(&m_audio, input());
@@ -52,7 +52,7 @@ void AudioProcessorSDL::pause() {
 
 void AudioProcessorSDL::setBufferSamples(int samples) {
 	AudioProcessor::setBufferSamples(samples);
-	if (m_audio.samples != samples) {
+	if (m_audio.samples != static_cast<size_t>(samples)) {
 		m_audio.samples = samples;
 		if (m_audio.core) {
 			mSDLDeinitAudio(&m_audio);

@@ -35,34 +35,6 @@ static void _removeBreakpoint(struct mCheatDevice* device, struct GBACheatSet* c
 	GBAClearBreakpoint(device->p->board, cheats->hook->address, cheats->hook->mode, cheats->hook->patchedOpcode);
 }
 
-static void _patchROM(struct mCheatDevice* device, struct GBACheatSet* cheats) {
-	if (!device->p) {
-		return;
-	}
-	int i;
-	for (i = 0; i < MAX_ROM_PATCHES; ++i) {
-		if (!cheats->romPatches[i].exists || cheats->romPatches[i].applied) {
-			continue;
-		}
-		GBAPatch16(device->p->cpu, cheats->romPatches[i].address, cheats->romPatches[i].newValue, &cheats->romPatches[i].oldValue);
-		cheats->romPatches[i].applied = true;
-	}
-}
-
-static void _unpatchROM(struct mCheatDevice* device, struct GBACheatSet* cheats) {
-	if (!device->p) {
-		return;
-	}
-	int i;
-	for (i = 0; i < MAX_ROM_PATCHES; ++i) {
-		if (!cheats->romPatches[i].exists || !cheats->romPatches[i].applied) {
-			continue;
-		}
-		GBAPatch16(device->p->cpu, cheats->romPatches[i].address, cheats->romPatches[i].oldValue, 0);
-		cheats->romPatches[i].applied = false;
-	}
-}
-
 static void GBACheatSetDeinit(struct mCheatSet* set);
 static void GBACheatAddSet(struct mCheatSet* cheats, struct mCheatDevice* device);
 static void GBACheatRemoveSet(struct mCheatSet* cheats, struct mCheatDevice* device);
@@ -97,10 +69,6 @@ static struct mCheatSet* GBACheatSetCreate(struct mCheatDevice* device, const ch
 
 	set->d.refresh = GBACheatRefresh;
 
-	int i;
-	for (i = 0; i < MAX_ROM_PATCHES; ++i) {
-		set->romPatches[i].exists = false;
-	}
 	return &set->d;
 }
 
@@ -124,12 +92,10 @@ static void GBACheatSetDeinit(struct mCheatSet* set) {
 static void GBACheatAddSet(struct mCheatSet* cheats, struct mCheatDevice* device) {
 	struct GBACheatSet* gbaset = (struct GBACheatSet*) cheats;
 	_addBreakpoint(device, gbaset);
-	_patchROM(device, gbaset);
 }
 
 static void GBACheatRemoveSet(struct mCheatSet* cheats, struct mCheatDevice* device) {
 	struct GBACheatSet* gbaset = (struct GBACheatSet*) cheats;
-	_unpatchROM(device, gbaset);
 	_removeBreakpoint(device, gbaset);
 }
 
@@ -139,36 +105,36 @@ static bool GBACheatAddAutodetect(struct GBACheatSet* set, uint32_t op1, uint32_
 	char line[18] = "XXXXXXXX XXXXXXXX";
 	snprintf(line, sizeof(line), "%08X %08X", op1, op2);
 
-	int gsaP, rgsaP, parP, rparP;
+	int nextProbability;
 	int maxProbability = INT_MIN;
 	switch (set->gsaVersion) {
 	case 0:
 		// Try to detect GameShark version
 		GBACheatDecryptGameShark(&o1, &o2, GBACheatGameSharkSeeds);
-		gsaP = GBACheatGameSharkProbability(o1, o2);
+		nextProbability = GBACheatGameSharkProbability(o1, o2);
 		o1 = op1;
 		o2 = op2;
-		if (gsaP > maxProbability) {
-			maxProbability = gsaP;
+		if (nextProbability > maxProbability) {
+			maxProbability = nextProbability;
 			GBACheatSetGameSharkVersion(set, GBA_GS_GSAV1);
 		}
 
 		GBACheatDecryptGameShark(&o1, &o2, GBACheatProActionReplaySeeds);
-		parP = GBACheatProActionReplayProbability(o1, o2);
-		if (parP > maxProbability) {
-			maxProbability = parP;
+		nextProbability = GBACheatProActionReplayProbability(o1, o2);
+		if (nextProbability > maxProbability) {
+			maxProbability = nextProbability;
 			GBACheatSetGameSharkVersion(set, GBA_GS_PARV3);
 		}
 
-		rgsaP = GBACheatGameSharkProbability(op1, op1);
-		if (rgsaP > maxProbability) {
-			maxProbability = rgsaP;
+		nextProbability = GBACheatGameSharkProbability(op1, op2);
+		if (nextProbability > maxProbability) {
+			maxProbability = nextProbability;
 			GBACheatSetGameSharkVersion(set, GBA_GS_GSAV1_RAW);
 		}
 
-		rparP = GBACheatProActionReplayProbability(op1, op1);
-		if (rparP > maxProbability) {
-			maxProbability = rparP;
+		nextProbability = GBACheatProActionReplayProbability(op1, op2);
+		if (nextProbability > maxProbability) {
+			maxProbability = nextProbability;
 			GBACheatSetGameSharkVersion(set, GBA_GS_PARV3_RAW);
 		}
 
@@ -274,13 +240,8 @@ bool GBACheatAddLine(struct mCheatSet* set, const char* line, int type) {
 
 static void GBACheatRefresh(struct mCheatSet* cheats, struct mCheatDevice* device) {
 	struct GBACheatSet* gbaset = (struct GBACheatSet*) cheats;
-	if (cheats->enabled) {
-		_patchROM(device, gbaset);
-		if (gbaset->hook && !gbaset->hook->reentries) {
-			_addBreakpoint(device, gbaset);
-		}
-	} else {
-		_unpatchROM(device, gbaset);
+	if (cheats->enabled && gbaset->hook && !gbaset->hook->reentries) {
+		_addBreakpoint(device, gbaset);
 	}
 }
 
@@ -362,49 +323,49 @@ static void GBACheatDumpDirectives(struct mCheatSet* set, struct StringList* dir
 
 int GBACheatAddressIsReal(uint32_t address) {
 	switch (address >> BASE_OFFSET) {
-	case REGION_BIOS:
+	case GBA_REGION_BIOS:
 		return -0x80;
 		break;
-	case REGION_WORKING_RAM:
-		if ((address & OFFSET_MASK) > SIZE_WORKING_RAM) {
+	case GBA_REGION_EWRAM:
+		if ((address & OFFSET_MASK) > GBA_SIZE_EWRAM) {
 			return -0x40;
 		}
 		return 0x20;
-	case REGION_WORKING_IRAM:
-		if ((address & OFFSET_MASK) > SIZE_WORKING_IRAM) {
+	case GBA_REGION_IWRAM:
+		if ((address & OFFSET_MASK) > GBA_SIZE_IWRAM) {
 			return -0x40;
 		}
 		return 0x20;
-	case REGION_IO:
-		if ((address & OFFSET_MASK) > SIZE_IO) {
+	case GBA_REGION_IO:
+		if ((address & OFFSET_MASK) > GBA_SIZE_IO) {
 			return -0x80;
 		}
 		return 0x10;
-	case REGION_OAM:
-		if ((address & OFFSET_MASK) > SIZE_OAM) {
+	case GBA_REGION_OAM:
+		if ((address & OFFSET_MASK) > GBA_SIZE_OAM) {
 			return -0x80;
 		}
 		return -0x8;
-	case REGION_VRAM:
-		if ((address & OFFSET_MASK) > SIZE_VRAM) {
+	case GBA_REGION_VRAM:
+		if ((address & OFFSET_MASK) > GBA_SIZE_VRAM) {
 			return -0x80;
 		}
 		return -0x8;
-	case REGION_PALETTE_RAM:
-		if ((address & OFFSET_MASK) > SIZE_PALETTE_RAM) {
+	case GBA_REGION_PALETTE_RAM:
+		if ((address & OFFSET_MASK) > GBA_SIZE_PALETTE_RAM) {
 			return -0x80;
 		}
 		return -0x8;
-	case REGION_CART0:
-	case REGION_CART0_EX:
-	case REGION_CART1:
-	case REGION_CART1_EX:
-	case REGION_CART2:
-	case REGION_CART2_EX:
+	case GBA_REGION_ROM0:
+	case GBA_REGION_ROM0_EX:
+	case GBA_REGION_ROM1:
+	case GBA_REGION_ROM1_EX:
+	case GBA_REGION_ROM2:
+	case GBA_REGION_ROM2_EX:
 		return -0x8;
-	case REGION_CART_SRAM:
-	case REGION_CART_SRAM_MIRROR:
-		if ((address & OFFSET_MASK) > SIZE_CART_FLASH512) {
+	case GBA_REGION_SRAM:
+	case GBA_REGION_SRAM_MIRROR:
+		if ((address & OFFSET_MASK) > GBA_SIZE_FLASH512) {
 			return -0x80;
 		}
 		return -0x8;

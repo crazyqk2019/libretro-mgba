@@ -71,4 +71,10 @@ AboutScreen::AboutScreen(QWidget* parent)
 		patrons.replace("{patrons}", patronList.join(" • "));
 		m_ui.patrons->setText(patrons);
 	}
+
+	{
+		QString copyright = m_ui.copyright->text();
+		copyright.replace("{year}", QLatin1String("2023"));
+		m_ui.copyright->setText(copyright);
+	}
 }

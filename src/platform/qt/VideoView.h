@@ -7,6 +7,7 @@
 
 #ifdef USE_FFMPEG
 
+#include <QStringList>
 #include <QWidget>
 
 #include <memory>
@@ -44,32 +45,44 @@ signals:
 private slots:
 	void selectFile();
 	void setFilename(const QString&);
-	void setAudioCodec(const QString&, bool manual = true);
-	void setVideoCodec(const QString&, bool manual = true);
-	void setContainer(const QString&, bool manual = true);
+	void setAudioCodec(const QString&);
+	void setVideoCodec(const QString&);
+	void setContainer(const QString&);
 
-	void setAudioBitrate(int, bool manual = true);
-	void setVideoBitrate(int, bool manual = true);
+	void setAudioBitrate(int);
+	void setVideoBitrate(int);
+	void setVideoRateFactor(int);
 
-	void setWidth(int, bool manual = true);
-	void setHeight(int, bool manual = true);
-	void setAspectWidth(int, bool manual = true);
-	void setAspectHeight(int, bool manual = true);
+	void setWidth(int);
+	void setHeight(int);
+	void setAspectWidth(int);
+	void setAspectHeight(int);
 
 	void showAdvanced(bool);
 
 	void uncheckIncompatible();
 	void updatePresets();
 
+	void changeExtension();
+
 private:
 	struct Preset {
 		QString container;
 		QString vcodec;
 		QString acodec;
-		int vbr;
-		int abr;
+		int vbr = 0;
+		int abr = 0;
 		QSize dims;
 
+		Preset() {}
+		Preset(const QString& container, const QString& vcodec, const QString& acodec, int vbr, int abr, QSize dims = QSize())
+		    : container(container)
+		    , vcodec(vcodec)
+		    , acodec(acodec)
+		    , vbr(vbr)
+		    , abr(abr)
+		    , dims(dims) {}
+		Preset(QSize dims) : dims(dims) {}
 		bool compatible(const Preset&) const;
 	};
 
@@ -97,6 +110,8 @@ private:
 	char* m_videoCodecCstr = nullptr;
 	char* m_containerCstr = nullptr;
 
+	bool m_updatesBlocked = false;
+
 	int m_abr;
 	int m_vbr;
 
@@ -111,6 +126,7 @@ private:
 	static QMap<QString, QString> s_acodecMap;
 	static QMap<QString, QString> s_vcodecMap;
 	static QMap<QString, QString> s_containerMap;
+	static QMap<QString, QStringList> s_extensionMap;
 };
 
 }

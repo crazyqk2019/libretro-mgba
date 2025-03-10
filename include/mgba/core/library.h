@@ -10,6 +10,8 @@
 
 CXX_GUARD_START
 
+#ifdef ENABLE_VFS
+
 #include <mgba/core/core.h>
 #include <mgba-util/vector.h>
 
@@ -35,7 +37,7 @@ void mLibraryDestroy(struct mLibrary*);
 
 struct VDir;
 struct VFile;
-void mLibraryLoadDirectory(struct mLibrary* library, const char* base);
+void mLibraryLoadDirectory(struct mLibrary* library, const char* base, bool recursive);
 void mLibraryClear(struct mLibrary* library);
 
 size_t mLibraryCount(struct mLibrary* library, const struct mLibraryEntry* constraints);
@@ -45,6 +47,8 @@ struct VFile* mLibraryOpenVFile(struct mLibrary* library, const struct mLibraryE
 
 struct NoIntroDB;
 void mLibraryAttachGameDB(struct mLibrary* library, const struct NoIntroDB* db);
+
+#endif
 
 #endif
 

@@ -11,15 +11,8 @@
 
 using namespace QGBA;
 
-void GBOverride::apply(struct mCore* core) {
-	if (core->platform(core) != PLATFORM_GB) {
-		return;
-	}
-	GBOverrideApply(static_cast<GB*>(core->board), &override);
-}
-
 void GBOverride::identify(const struct mCore* core) {
-	if (core->platform(core) != PLATFORM_GB) {
+	if (core->platform(core) != mPLATFORM_GB) {
 		return;
 	}
 	GB* gb = static_cast<GB*>(core->board);
@@ -31,4 +24,8 @@ void GBOverride::identify(const struct mCore* core) {
 
 void GBOverride::save(struct Configuration* config) const {
 	GBOverrideSave(config, &override);
+}
+
+const void* GBOverride::raw() const {
+	return &override;
 }

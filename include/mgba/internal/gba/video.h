@@ -16,10 +16,16 @@ CXX_GUARD_START
 
 mLOG_DECLARE_CATEGORY(GBA_VIDEO);
 
+#define GBA_VSTALL_T4(X) (0x011 << (X))
+#define GBA_VSTALL_T8(X) (0x010 << (X))
+#define GBA_VSTALL_A2 0x100
+#define GBA_VSTALL_A3 0x200
+#define GBA_VSTALL_B 0x400
+
 enum {
 	VIDEO_HBLANK_PIXELS = 68,
-	VIDEO_HDRAW_LENGTH = 1006,
-	VIDEO_HBLANK_LENGTH = 226,
+	VIDEO_HDRAW_LENGTH = 1008,
+	VIDEO_HBLANK_LENGTH = 224,
 	VIDEO_HORIZONTAL_LENGTH = 1232,
 
 	VIDEO_VBLANK_PIXELS = 68,
@@ -176,6 +182,10 @@ struct GBAVideoRenderer {
 	void (*reset)(struct GBAVideoRenderer* renderer);
 	void (*deinit)(struct GBAVideoRenderer* renderer);
 
+	uint32_t (*rendererId)(const struct GBAVideoRenderer* renderer);
+	bool (*loadState)(struct GBAVideoRenderer* renderer, const void* state, size_t size);
+	void (*saveState)(struct GBAVideoRenderer* renderer, void** state, size_t* size);
+
 	uint16_t (*writeVideoRegister)(struct GBAVideoRenderer* renderer, uint32_t address, uint16_t value);
 	void (*writeVRAM)(struct GBAVideoRenderer* renderer, uint32_t address);
 	void (*writePalette)(struct GBAVideoRenderer* renderer, uint32_t address, uint16_t value);
@@ -193,10 +203,12 @@ struct GBAVideoRenderer {
 
 	bool disableBG[4];
 	bool disableOBJ;
+	bool disableWIN[2];
+	bool disableOBJWIN;
 
 	bool highlightBG[4];
 	bool highlightOBJ[128];
-	color_t highlightColor;
+	mColor highlightColor;
 	uint8_t highlightAmount;
 };
 
@@ -205,14 +217,14 @@ struct GBAVideo {
 	struct GBAVideoRenderer* renderer;
 	struct mTimingEvent event;
 
-	// VCOUNT
 	int vcount;
+	unsigned stallMask;
 
 	uint16_t palette[512];
 	uint16_t* vram;
 	union GBAOAM oam;
 
-	int32_t frameCounter;
+	uint32_t frameCounter;
 	int frameskip;
 	int frameskipCounter;
 };
@@ -220,6 +232,8 @@ struct GBAVideo {
 void GBAVideoInit(struct GBAVideo* video);
 void GBAVideoReset(struct GBAVideo* video);
 void GBAVideoDeinit(struct GBAVideo* video);
+
+void GBAVideoDummyRendererCreate(struct GBAVideoRenderer*);
 void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAVideoRenderer* renderer);
 
 void GBAVideoWriteDISPSTAT(struct GBAVideo* video, uint16_t value);

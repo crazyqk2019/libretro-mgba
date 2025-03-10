@@ -11,31 +11,29 @@
 CXX_GUARD_START
 
 #include <mgba/core/config.h>
-#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
+#ifdef ENABLE_VFS
 #include <mgba/core/directories.h>
 #endif
 #ifndef MINIMAL_CORE
 #include <mgba/core/input.h>
 #endif
 #include <mgba/core/interface.h>
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 #include <mgba/debugger/debugger.h>
 #endif
 
 enum mPlatform {
-	PLATFORM_NONE = -1,
-#ifdef M_CORE_GBA
-	PLATFORM_GBA = 0,
-#endif
-#ifdef M_CORE_GB
-	PLATFORM_GB = 1,
-#endif
+	mPLATFORM_NONE = -1,
+	mPLATFORM_GBA = 0,
+	mPLATFORM_GB = 1,
 };
 
 enum mCoreChecksumType {
-	CHECKSUM_CRC32,
+	mCHECKSUM_CRC32,
+	mCHECKSUM_MD5,
 };
 
+struct mAudioBuffer;
 struct mCoreConfig;
 struct mCoreSync;
 struct mDebuggerSymbols;
@@ -49,7 +47,7 @@ struct mCore {
 	struct mDebuggerSymbols* symbolTable;
 	struct mVideoLogger* videoLogger;
 
-#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
+#ifdef ENABLE_VFS
 	struct mDirectorySet dirs;
 #endif
 #ifndef MINIMAL_CORE
@@ -69,15 +67,21 @@ struct mCore {
 	void (*setSync)(struct mCore*, struct mCoreSync*);
 	void (*loadConfig)(struct mCore*, const struct mCoreConfig*);
 	void (*reloadConfigOption)(struct mCore*, const char* option, const struct mCoreConfig*);
+	void (*setOverride)(struct mCore*, const void* override);
 
-	void (*desiredVideoDimensions)(struct mCore*, unsigned* width, unsigned* height);
-	void (*setVideoBuffer)(struct mCore*, color_t* buffer, size_t stride);
+	void (*baseVideoSize)(const struct mCore*, unsigned* width, unsigned* height);
+	void (*currentVideoSize)(const struct mCore*, unsigned* width, unsigned* height);
+	unsigned (*videoScale)(const struct mCore*);
+	size_t (*screenRegions)(const struct mCore*, const struct mCoreScreenRegion**);
+
+	void (*setVideoBuffer)(struct mCore*, mColor* buffer, size_t stride);
 	void (*setVideoGLTex)(struct mCore*, unsigned texid);
 
 	void (*getPixels)(struct mCore*, const void** buffer, size_t* stride);
 	void (*putPixels)(struct mCore*, const void* buffer, size_t stride);
 
-	struct blip_t* (*getAudioChannel)(struct mCore*, int ch);
+	unsigned (*audioSampleRate)(const struct mCore*);
+	struct mAudioBuffer* (*getAudioBuffer)(struct mCore*);
 	void (*setAudioBufferSize)(struct mCore*, size_t samples);
 	size_t (*getAudioBufferSize)(struct mCore*);
 
@@ -90,6 +94,7 @@ struct mCore {
 	bool (*loadSave)(struct mCore*, struct VFile* vf);
 	bool (*loadTemporarySave)(struct mCore*, struct VFile* vf);
 	void (*unloadROM)(struct mCore*);
+	size_t (*romSize)(const struct mCore*);
 	void (*checksum)(const struct mCore*, void* data, enum mCoreChecksumType type);
 
 	bool (*loadBIOS)(struct mCore*, struct VFile* vf, int biosID);
@@ -105,19 +110,22 @@ struct mCore {
 	size_t (*stateSize)(struct mCore*);
 	bool (*loadState)(struct mCore*, const void* state);
 	bool (*saveState)(struct mCore*, void* state);
+	bool (*loadExtraState)(struct mCore*, const struct mStateExtdata*);
+	bool (*saveExtraState)(struct mCore*, struct mStateExtdata*);
 
 	void (*setKeys)(struct mCore*, uint32_t keys);
 	void (*addKeys)(struct mCore*, uint32_t keys);
 	void (*clearKeys)(struct mCore*, uint32_t keys);
+	uint32_t (*getKeys)(struct mCore*);
 
-	int32_t (*frameCounter)(const struct mCore*);
+	uint32_t (*frameCounter)(const struct mCore*);
 	int32_t (*frameCycles)(const struct mCore*);
 	int32_t (*frequency)(const struct mCore*);
 
-	void (*getGameTitle)(const struct mCore*, char* title);
-	void (*getGameCode)(const struct mCore*, char* title);
+	void (*getGameInfo)(const struct mCore*, struct mGameInfo* info);
 
 	void (*setPeripheral)(struct mCore*, int type, void*);
+	void* (*getPeripheral)(struct mCore*, int type);
 
 	uint32_t (*busRead8)(struct mCore*, uint32_t address);
 	uint32_t (*busRead16)(struct mCore*, uint32_t address);
@@ -138,7 +146,11 @@ struct mCore {
 	size_t (*listMemoryBlocks)(const struct mCore*, const struct mCoreMemoryBlock**);
 	void* (*getMemoryBlock)(struct mCore*, size_t id, size_t* sizeOut);
 
-#ifdef USE_DEBUGGERS
+	size_t (*listRegisters)(const struct mCore*, const struct mCoreRegisterInfo**);
+	bool (*readRegister)(const struct mCore*, const char* name, void* out);
+	bool (*writeRegister)(struct mCore*, const char* name, const void* in);
+
+#ifdef ENABLE_DEBUGGERS
 	bool (*supportsDebuggerType)(struct mCore*, enum mDebuggerType);
 	struct mDebuggerPlatform* (*debuggerPlatform)(struct mCore*);
 	struct CLIDebuggerSystem* (*cliDebuggerSystem)(struct mCore*);
@@ -166,7 +178,7 @@ struct mCore {
 #endif
 };
 
-#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
+#ifdef ENABLE_VFS
 struct mCore* mCoreFind(const char* path);
 bool mCoreLoadFile(struct mCore* core, const char* path);
 
@@ -180,16 +192,20 @@ bool mCoreAutoloadSave(struct mCore* core);
 bool mCoreAutoloadPatch(struct mCore* core);
 bool mCoreAutoloadCheats(struct mCore* core);
 
+bool mCoreLoadSaveFile(struct mCore* core, const char* path, bool temporary);
+
 bool mCoreSaveState(struct mCore* core, int slot, int flags);
 bool mCoreLoadState(struct mCore* core, int slot, int flags);
 struct VFile* mCoreGetState(struct mCore* core, int slot, bool write);
 void mCoreDeleteState(struct mCore* core, int slot);
 
 void mCoreTakeScreenshot(struct mCore* core);
+bool mCoreTakeScreenshotVF(struct mCore* core, struct VFile* vf);
 #endif
 
 struct mCore* mCoreFindVF(struct VFile* vf);
 enum mPlatform mCoreIsCompatible(struct VFile* vf);
+struct mCore* mCoreCreate(enum mPlatform);
 
 bool mCoreSaveStateNamed(struct mCore* core, struct VFile* vf, int flags);
 bool mCoreLoadStateNamed(struct mCore* core, struct VFile* vf, int flags);
@@ -201,11 +217,15 @@ void mCoreLoadForeignConfig(struct mCore* core, const struct mCoreConfig* config
 void mCoreSetRTC(struct mCore* core, struct mRTCSource* rtc);
 
 void* mCoreGetMemoryBlock(struct mCore* core, uint32_t start, size_t* size);
+void* mCoreGetMemoryBlockMasked(struct mCore* core, uint32_t start, size_t* size, uint32_t mask);
+const struct mCoreMemoryBlock* mCoreGetMemoryBlockInfo(struct mCore* core, uint32_t address);
+
+double mCoreCalculateFramerateRatio(const struct mCore* core, double desiredFrameRate);
 
 #ifdef USE_ELF
 struct ELF;
 bool mCoreLoadELF(struct mCore* core, struct ELF* elf);
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 void mCoreLoadELFSymbols(struct mDebuggerSymbols* symbols, struct ELF*);
 #endif
 #endif

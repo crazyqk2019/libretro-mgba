@@ -5,9 +5,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba-util/platform/3ds/3ds-vfs.h>
 
-#ifdef USE_VFS_3DS
+#ifdef ENABLE_VFS_3DS
 #include <mgba-util/memory.h>
 #include <mgba-util/string.h>
+
+#define MAX_ENT 4
 
 struct VFile3DS {
 	struct VFile d;
@@ -16,9 +18,12 @@ struct VFile3DS {
 	u64 offset;
 };
 
+#ifdef ENABLE_VFS
 struct VDirEntry3DS {
 	struct VDirEntry d;
-	FS_DirectoryEntry ent;
+	FS_DirectoryEntry ent[MAX_ENT];
+	u32 entCount;
+	u32 currentEnt;
 	char utf8Name[256];
 };
 
@@ -29,6 +34,7 @@ struct VDir3DS {
 	Handle handle;
 	struct VDirEntry3DS vde;
 };
+#endif
 
 static bool _vf3dClose(struct VFile* vf);
 static off_t _vf3dSeek(struct VFile* vf, off_t offset, int whence);
@@ -38,8 +44,9 @@ static void* _vf3dMap(struct VFile* vf, size_t size, int flags);
 static void _vf3dUnmap(struct VFile* vf, void* memory, size_t size);
 static void _vf3dTruncate(struct VFile* vf, size_t size);
 static ssize_t _vf3dSize(struct VFile* vf);
-static bool _vf3dSync(struct VFile* vf, const void* buffer, size_t size);
+static bool _vf3dSync(struct VFile* vf, void* buffer, size_t size);
 
+#ifdef ENABLE_VFS
 static bool _vd3dClose(struct VDir* vd);
 static void _vd3dRewind(struct VDir* vd);
 static struct VDirEntry* _vd3dListNext(struct VDir* vd);
@@ -49,6 +56,7 @@ static bool _vd3dDeleteFile(struct VDir* vd, const char* path);
 
 static const char* _vd3deName(struct VDirEntry* vde);
 static enum VFSType _vd3deType(struct VDirEntry* vde);
+#endif
 
 struct VFile* VFileOpen3DS(FS_Archive* archive, const char* path, int flags) {
 	struct VFile3DS* vf3d = malloc(sizeof(struct VFile3DS));
@@ -122,7 +130,7 @@ ssize_t _vf3dRead(struct VFile* vf, void* buffer, size_t size) {
 ssize_t _vf3dWrite(struct VFile* vf, const void* buffer, size_t size) {
 	struct VFile3DS* vf3d = (struct VFile3DS*) vf;
 	u32 sizeWritten;
-	Result res = FSFILE_Write(vf3d->handle, &sizeWritten, vf3d->offset, buffer, size, FS_WRITE_FLUSH);
+	Result res = FSFILE_Write(vf3d->handle, &sizeWritten, vf3d->offset, buffer, size, FS_WRITE_FLUSH | FS_WRITE_UPDATE_TIME);
 	if (res) {
 		return -1;
 	}
@@ -133,6 +141,9 @@ ssize_t _vf3dWrite(struct VFile* vf, const void* buffer, size_t size) {
 static void* _vf3dMap(struct VFile* vf, size_t size, int flags) {
 	struct VFile3DS* vf3d = (struct VFile3DS*) vf;
 	UNUSED(flags);
+	if (!size) {
+		return NULL;
+	}
 	void* buffer = anonymousMemoryMap(size);
 	if (buffer) {
 		u32 sizeRead;
@@ -144,7 +155,7 @@ static void* _vf3dMap(struct VFile* vf, size_t size, int flags) {
 static void _vf3dUnmap(struct VFile* vf, void* memory, size_t size) {
 	struct VFile3DS* vf3d = (struct VFile3DS*) vf;
 	u32 sizeWritten;
-	FSFILE_Write(vf3d->handle, &sizeWritten, 0, memory, size, FS_WRITE_FLUSH);
+	FSFILE_Write(vf3d->handle, &sizeWritten, 0, memory, size, FS_WRITE_FLUSH | FS_WRITE_UPDATE_TIME);
 	mappedMemoryFree(memory, size);
 }
 
@@ -160,19 +171,18 @@ ssize_t _vf3dSize(struct VFile* vf) {
 	return size;
 }
 
-static bool _vf3dSync(struct VFile* vf, const void* buffer, size_t size) {
+static bool _vf3dSync(struct VFile* vf, void* buffer, size_t size) {
 	struct VFile3DS* vf3d = (struct VFile3DS*) vf;
 	if (buffer) {
 		u32 sizeWritten;
-		Result res = FSFILE_Write(vf3d->handle, &sizeWritten, 0, buffer, size, FS_WRITE_FLUSH);
-		if (res) {
-			return false;
-		}
+		Result res = FSFILE_Write(vf3d->handle, &sizeWritten, 0, buffer, size, FS_WRITE_FLUSH | FS_WRITE_UPDATE_TIME);
+		return R_SUCCEEDED(res);
 	}
 	FSFILE_Flush(vf3d->handle);
 	return true;
 }
 
+#ifdef ENABLE_VFS
 struct VDir* VDirOpen(const char* path) {
 	struct VDir3DS* vd3d = malloc(sizeof(struct VDir3DS));
 	if (!vd3d) {
@@ -200,6 +210,7 @@ struct VDir* VDirOpen(const char* path) {
 
 	vd3d->vde.d.name = _vd3deName;
 	vd3d->vde.d.type = _vd3deType;
+	vd3d->vde.entCount = 0;
 
 	return &vd3d->d;
 }
@@ -224,12 +235,16 @@ static void _vd3dRewind(struct VDir* vd) {
 
 static struct VDirEntry* _vd3dListNext(struct VDir* vd) {
 	struct VDir3DS* vd3d = (struct VDir3DS*) vd;
-	u32 n = 0;
-	memset(&vd3d->vde.ent, 0, sizeof(vd3d->vde.ent));
 	memset(vd3d->vde.utf8Name, 0, sizeof(vd3d->vde.utf8Name));
-	FSDIR_Read(vd3d->handle, &n, 1, &vd3d->vde.ent);
-	if (!n) {
-		return 0;
+	if (!vd3d->vde.entCount || vd3d->vde.currentEnt + 1 >= vd3d->vde.entCount) {
+		memset(&vd3d->vde.ent, 0, sizeof(vd3d->vde.ent));
+		FSDIR_Read(vd3d->handle, &vd3d->vde.entCount, MAX_ENT, vd3d->vde.ent);
+		vd3d->vde.currentEnt = 0;
+	} else {
+		++vd3d->vde.currentEnt;
+	}
+	if (!vd3d->vde.entCount) {
+		return NULL;
 	}
 	return &vd3d->vde.d;
 }
@@ -298,14 +313,14 @@ static bool _vd3dDeleteFile(struct VDir* vd, const char* path) {
 static const char* _vd3deName(struct VDirEntry* vde) {
 	struct VDirEntry3DS* vd3de = (struct VDirEntry3DS*) vde;
 	if (!vd3de->utf8Name[0]) {
-		utf16_to_utf8((uint8_t*) vd3de->utf8Name, vd3de->ent.name, sizeof(vd3de->utf8Name));
+		utf16_to_utf8((uint8_t*) vd3de->utf8Name, vd3de->ent[vd3de->currentEnt].name, sizeof(vd3de->utf8Name));
 	}
 	return vd3de->utf8Name;
 }
 
 static enum VFSType _vd3deType(struct VDirEntry* vde) {
 	struct VDirEntry3DS* vd3de = (struct VDirEntry3DS*) vde;
-	if (vd3de->ent.attributes & FS_ATTRIBUTE_DIRECTORY) {
+	if (vd3de->ent[vd3de->currentEnt].attributes & FS_ATTRIBUTE_DIRECTORY) {
 		return VFS_DIRECTORY;
 	}
 	return VFS_FILE;
@@ -315,4 +330,5 @@ bool VDirCreate(const char* path) {
 	Result rc = FSUSER_CreateDirectory(sdmcArchive, fsMakePath(PATH_ASCII, path), 0);
 	return R_SUCCEEDED(rc) || rc == 0xC82044BE;
 }
+#endif
 #endif

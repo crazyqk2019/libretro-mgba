@@ -50,14 +50,19 @@ void Swatch::setColor(int index, uint32_t color) {
 	updateFill(index);
 }
 
-void Swatch::paintEvent(QPaintEvent* event) {
+void Swatch::paintEvent(QPaintEvent*) {
 	QPainter painter(this);
 	painter.drawPixmap(QPoint(), m_backing);
 }
 
 void Swatch::mousePressEvent(QMouseEvent* event) {
+#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 	int x = event->x() / (m_size + 1);
 	int y = event->y() / (m_size + 1);
+#else
+	int x = event->position().x() / (m_size + 1);
+	int y = event->position().y() / (m_size + 1);
+#endif
 	emit indexPressed(y * m_dims.width() + x);
 }
 

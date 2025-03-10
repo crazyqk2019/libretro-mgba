@@ -7,7 +7,7 @@
 
 #include "DebuggerController.h"
 
-#ifdef USE_GDB_STUB
+#ifdef ENABLE_GDB_STUB
 
 #include <mgba/internal/debugger/gdb-stub.h>
 
@@ -23,11 +23,11 @@ public:
 
 public:
 	ushort port();
-	bool isAttached();
 
 public slots:
 	void setPort(ushort port);
-	void setBindAddress(uint32_t bindAddress);
+	void setBindAddress(const Address&);
+	void setWatchpointsBehavior(int watchpointsBehaviorId);
 	void listen();
 
 signals:
@@ -41,6 +41,7 @@ private:
 
 	ushort m_port = 2345;
 	Address m_bindAddress;
+	enum GDBWatchpointsBehvaior m_watchpointsBehavior = GDB_WATCHPOINT_STANDARD_LOGIC;
 };
 
 }
