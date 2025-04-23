@@ -1339,53 +1339,53 @@ struct retro_core_options_v2 options_ca = {
 /* RETRO_LANGUAGE_CHS */
 
 #define CATEGORY_SYSTEM_LABEL_CHS "系统"
-#define CATEGORY_SYSTEM_INFO_0_CHS NULL
+#define CATEGORY_SYSTEM_INFO_0_CHS "选择硬件类型/BIOS参数。"
 #define CATEGORY_VIDEO_LABEL_CHS "视频"
-#define CATEGORY_VIDEO_INFO_0_CHS NULL
-#define CATEGORY_VIDEO_INFO_1_CHS NULL
+#define CATEGORY_VIDEO_INFO_0_CHS "配置 DMG 调色板/SGB 边框/色彩校正/LCD 鬼影效果。"
+#define CATEGORY_VIDEO_INFO_1_CHS "配置 DMG 调色板/SGB 边框。"
 #define CATEGORY_AUDIO_LABEL_CHS "音频"
-#define CATEGORY_AUDIO_INFO_0_CHS NULL
-#define CATEGORY_INPUT_LABEL_CHS NULL
-#define CATEGORY_INPUT_INFO_0_CHS NULL
+#define CATEGORY_AUDIO_INFO_0_CHS "配置音频滤镜。"
+#define CATEGORY_INPUT_LABEL_CHS "输入和辅助设备"
+#define CATEGORY_INPUT_INFO_0_CHS "配置控制器/传感器输入和震动设置。"
 #define CATEGORY_PERFORMANCE_LABEL_CHS "性能"
-#define CATEGORY_PERFORMANCE_INFO_0_CHS NULL
-#define MGBA_GB_MODEL_LABEL_CHS NULL
-#define MGBA_GB_MODEL_INFO_0_CHS NULL
+#define CATEGORY_PERFORMANCE_INFO_0_CHS "配置空循环移除/跳帧。"
+#define MGBA_GB_MODEL_LABEL_CHS "Game Boy 型号（需要重启）"
+#define MGBA_GB_MODEL_INFO_0_CHS "使用指定的Game Boy型号运行游戏。‘自动检测’会为当前游戏选择最合适的型号。"
 #define OPTION_VAL_AUTODETECT_CHS "自动检测"
 #define OPTION_VAL_GAME_BOY_CHS NULL
 #define OPTION_VAL_SUPER_GAME_BOY_CHS NULL
 #define OPTION_VAL_GAME_BOY_COLOR_CHS NULL
 #define OPTION_VAL_GAME_BOY_ADVANCE_CHS NULL
-#define MGBA_USE_BIOS_LABEL_CHS NULL
-#define MGBA_USE_BIOS_INFO_0_CHS NULL
-#define MGBA_SKIP_BIOS_LABEL_CHS NULL
-#define MGBA_SKIP_BIOS_INFO_0_CHS NULL
-#define MGBA_GB_COLORS_LABEL_CHS NULL
-#define MGBA_GB_COLORS_INFO_0_CHS NULL
+#define MGBA_USE_BIOS_LABEL_CHS "使用官方BIOS文件（需要重启）"
+#define MGBA_USE_BIOS_INFO_0_CHS "RetroArch系统目录下如果存在官方BIOS/引导装载程序, 则使用。"
+#define MGBA_SKIP_BIOS_LABEL_CHS "跳过BIOS启动画面（需要重启）"
+#define MGBA_SKIP_BIOS_INFO_0_CHS "使用官方BIOS/引导装载程序时，跳过启动动画。如果‘使用官方BIOS文件’选项关闭，则此选项无效。"
+#define MGBA_GB_COLORS_LABEL_CHS "默认Game Boy调色板"
+#define MGBA_GB_COLORS_INFO_0_CHS "为非GBC/SGB兼容的GB游戏，或者硬件型号强制选择为GB时，选择要使用的调色板。"
 #define OPTION_VAL_GRAYSCALE_CHS "灰阶"
-#define MGBA_GB_COLORS_PRESET_LABEL_CHS NULL
-#define MGBA_GB_COLORS_PRESET_INFO_0_CHS NULL
-#define OPTION_VAL_0_CHS NULL
-#define OPTION_VAL_1_CHS NULL
-#define OPTION_VAL_2_CHS NULL
-#define OPTION_VAL_3_CHS NULL
-#define MGBA_SGB_BORDERS_LABEL_CHS NULL
-#define MGBA_SGB_BORDERS_INFO_0_CHS NULL
+#define MGBA_GB_COLORS_PRESET_LABEL_CHS "硬件预设GB调色板（需要重启）"
+#define MGBA_GB_COLORS_PRESET_INFO_0_CHS "对于在GBC和SGB上有预设调色板的GB游戏，使用何种预设调色板。"
+#define OPTION_VAL_0_CHS "默认Game Boy预设"
+#define OPTION_VAL_1_CHS "只使用Game Boy Color预设"
+#define OPTION_VAL_2_CHS "只使用Super Game Boy预设"
+#define OPTION_VAL_3_CHS "所有可用预设"
+#define MGBA_SGB_BORDERS_LABEL_CHS "使用SGB边框（需要重启）"
+#define MGBA_SGB_BORDERS_INFO_0_CHS "运行SGB增强游戏时，显示SGB边框。"
 #define MGBA_COLOR_CORRECTION_LABEL_CHS "色彩校正"
-#define MGBA_COLOR_CORRECTION_INFO_0_CHS NULL
+#define MGBA_COLOR_CORRECTION_INFO_0_CHS "调整输出色彩以匹配真实GBA/GBC硬件的显示效果。"
 #define OPTION_VAL_AUTO_CHS "自动"
-#define MGBA_INTERFRAME_BLENDING_LABEL_CHS NULL
-#define MGBA_INTERFRAME_BLENDING_INFO_0_CHS NULL
+#define MGBA_INTERFRAME_BLENDING_LABEL_CHS "帧间混合"
+#define MGBA_INTERFRAME_BLENDING_INFO_0_CHS "模拟LCD鬼影现象。‘简单’模式对当前帧和上一帧执行50:50的混合； ‘智能’模式尝试检测屏幕闪烁，只在受影响的像素上执行50:50的混合；‘LCD鬼影’模式通过合并多个帧缓冲来模拟自然LCD的响应时间；对于某些主动利用LCD鬼影现象实现透明效果的游戏，必须使用‘简单’或者‘智能’混合模式，例如：《水上摩托》、《地球解放军》、《零式赛车》、《我们的太阳》系列"
 #define OPTION_VAL_MIX_CHS "简单"
 #define OPTION_VAL_MIX_SMART_CHS "智能"
-#define OPTION_VAL_LCD_GHOSTING_CHS NULL
-#define OPTION_VAL_LCD_GHOSTING_FAST_CHS NULL
-#define MGBA_AUDIO_LOW_PASS_FILTER_LABEL_CHS "音频过滤器"
+#define OPTION_VAL_LCD_GHOSTING_CHS "LCD鬼影（精确）"
+#define OPTION_VAL_LCD_GHOSTING_FAST_CHS "LCD鬼影（快速）"
+#define MGBA_AUDIO_LOW_PASS_FILTER_LABEL_CHS "音频滤镜"
 #define MGBA_AUDIO_LOW_PASS_FILTER_LABEL_CAT_CHS "低通滤波器"
-#define MGBA_AUDIO_LOW_PASS_FILTER_INFO_0_CHS NULL
-#define MGBA_AUDIO_LOW_PASS_RANGE_LABEL_CHS NULL
-#define MGBA_AUDIO_LOW_PASS_RANGE_LABEL_CAT_CHS NULL
-#define MGBA_AUDIO_LOW_PASS_RANGE_INFO_0_CHS NULL
+#define MGBA_AUDIO_LOW_PASS_FILTER_INFO_0_CHS "启用低通音频滤波器来降低生成音频的刺耳声。"
+#define MGBA_AUDIO_LOW_PASS_RANGE_LABEL_CHS "音频滤镜等级"
+#define MGBA_AUDIO_LOW_PASS_RANGE_LABEL_CAT_CHS "过滤等级"
+#define MGBA_AUDIO_LOW_PASS_RANGE_INFO_0_CHS "指定低通滤波器的截断频率。值越高过滤强度越高，因为越宽范围的高频频谱会被衰减。"
 #define OPTION_VAL_5_CHS NULL
 #define OPTION_VAL_10_CHS NULL
 #define OPTION_VAL_15_CHS NULL
@@ -1405,26 +1405,26 @@ struct retro_core_options_v2 options_ca = {
 #define OPTION_VAL_85_CHS NULL
 #define OPTION_VAL_90_CHS NULL
 #define OPTION_VAL_95_CHS NULL
-#define MGBA_ALLOW_OPPOSING_DIRECTIONS_LABEL_CHS NULL
-#define MGBA_ALLOW_OPPOSING_DIRECTIONS_INFO_0_CHS NULL
+#define MGBA_ALLOW_OPPOSING_DIRECTIONS_LABEL_CHS "允许同时按下相反方向的输入"
+#define MGBA_ALLOW_OPPOSING_DIRECTIONS_INFO_0_CHS "开启此选项会允许同时按下/快速切换/同时按住左右键（或者上下键），此功能可能会导致角色移动问题。"
 #define MGBA_SOLAR_SENSOR_LEVEL_LABEL_CHS "太阳光传感器等级"
-#define MGBA_SOLAR_SENSOR_LEVEL_INFO_0_CHS NULL
-#define OPTION_VAL_SENSOR_CHS "如果可用则使用设备传感器"
-#define MGBA_FORCE_GBP_LABEL_CHS NULL
-#define MGBA_FORCE_GBP_INFO_0_CHS NULL
-#define MGBA_IDLE_OPTIMIZATION_LABEL_CHS NULL
-#define MGBA_IDLE_OPTIMIZATION_INFO_0_CHS NULL
-#define OPTION_VAL_REMOVE_KNOWN_CHS "移除已知信息"
-#define OPTION_VAL_DETECT_AND_REMOVE_CHS NULL
-#define OPTION_VAL_DON_T_REMOVE_CHS NULL
+#define MGBA_SOLAR_SENSOR_LEVEL_INFO_0_CHS "设置环境光强敏感度。有些带有太阳光传感器的卡带使用此功能，例如：《我们的太阳》系列。"
+#define OPTION_VAL_SENSOR_CHS "如果可用则使用当前设备自带传感器"
+#define MGBA_FORCE_GBP_LABEL_CHS "GBP底座震动功能（需要重启）"
+#define MGBA_FORCE_GBP_INFO_0_CHS "开启此选项允许带有GBP兼容标志的游戏使用手柄的震动功能。由于任天堂这个功能的工作机制，它可能会导致一些小问题，例如有些此类游戏会闪烁或者卡顿。"
+#define MGBA_IDLE_OPTIMIZATION_LABEL_CHS "移除空闲循环"
+#define MGBA_IDLE_OPTIMIZATION_INFO_0_CHS "通过优化所谓的‘空闲循环’来降低系统负载。‘空闲循环’指代码中的无用代码段，但是CPU却全速运行（就像汽车发动机的空转）。 此选项可以提高性能，在低端硬件上应该开启。"
+#define OPTION_VAL_REMOVE_KNOWN_CHS "移除已知的空闲循环"
+#define OPTION_VAL_DETECT_AND_REMOVE_CHS "检测和移除空循环"
+#define OPTION_VAL_DON_T_REMOVE_CHS "不要移除空循环"
 #define MGBA_FRAMESKIP_LABEL_CHS "跳帧"
-#define MGBA_FRAMESKIP_INFO_0_CHS NULL
-#define OPTION_VAL_AUTO_THRESHOLD_CHS NULL
+#define MGBA_FRAMESKIP_INFO_0_CHS "跳过一定帧数以避免音频缓冲欠载（爆音），通过牺牲视频流畅度来提高性能。‘自动’模式使用前端推荐的帧数；‘自动（阈值）’模式使用‘跳帧阈值(%)’设置；‘固定间隔’模式使用‘跳帧间隔’设置。"
+#define OPTION_VAL_AUTO_THRESHOLD_CHS "自动（阈值）"
 #define OPTION_VAL_FIXED_INTERVAL_CHS "固定间隔"
 #define MGBA_FRAMESKIP_THRESHOLD_LABEL_CHS "跳帧阈值(%)"
-#define MGBA_FRAMESKIP_THRESHOLD_INFO_0_CHS NULL
-#define MGBA_FRAMESKIP_INTERVAL_LABEL_CHS NULL
-#define MGBA_FRAMESKIP_INTERVAL_INFO_0_CHS NULL
+#define MGBA_FRAMESKIP_THRESHOLD_INFO_0_CHS "当‘跳帧’设为‘自动（阈值）’时， 指定音频缓冲区占用阈值（百分比），低于该阈值时帧将被跳过。值越高爆音的风险越低，丢帧越频繁。"
+#define MGBA_FRAMESKIP_INTERVAL_LABEL_CHS "跳帧间隔"
+#define MGBA_FRAMESKIP_INTERVAL_INFO_0_CHS "当‘跳帧’设为‘固定间隔’时，此值指定渲染一帧后丢弃多少帧，例如： '0' = 60fps, '1' = 30fps, '2' = 15fps, 等等。"
 
 struct retro_core_option_v2_category option_cats_chs[] = {
    {
