@@ -1375,7 +1375,7 @@ struct retro_core_options_v2 options_ca = {
 #define MGBA_COLOR_CORRECTION_INFO_0_CHS "调整输出色彩以匹配真实GBA/GBC硬件的显示效果。"
 #define OPTION_VAL_AUTO_CHS "自动"
 #define MGBA_INTERFRAME_BLENDING_LABEL_CHS "帧间混合"
-#define MGBA_INTERFRAME_BLENDING_INFO_0_CHS "模拟LCD鬼影现象。‘简单’模式对当前帧和上一帧执行50:50的混合； ‘智能’模式尝试检测屏幕闪烁，只在受影响的像素上执行50:50的混合；‘LCD鬼影’模式通过合并多个帧缓冲来模拟自然LCD的响应时间；对于某些主动利用LCD鬼影现象实现透明效果的游戏，必须使用‘简单’或者‘智能’混合模式，例如：《水上摩托》、《地球解放军》、《零式赛车》、《我们的太阳》系列"
+#define MGBA_INTERFRAME_BLENDING_INFO_0_CHS "模拟LCD鬼影现象。‘简单’模式对当前帧和上一帧执行50:50的混合； ‘智能’模式尝试检测屏幕闪烁，只在受影响的像素上执行50:50的混合；‘LCD鬼影’模式通过合并多个帧缓冲来模拟自然LCD的响应时间；对于主动利用LCD鬼影来实现透明效果的游戏，必须使用‘简单’或者‘智能’模式（例如：《水上摩托》、《地球解放军》、《零式赛车》、《我们的太阳》系列）。"
 #define OPTION_VAL_MIX_CHS "简单"
 #define OPTION_VAL_MIX_SMART_CHS "智能"
 #define OPTION_VAL_LCD_GHOSTING_CHS "LCD鬼影（精确）"
@@ -1407,7 +1407,7 @@ struct retro_core_options_v2 options_ca = {
 #define OPTION_VAL_95_CHS NULL
 #define MGBA_ALLOW_OPPOSING_DIRECTIONS_LABEL_CHS "允许同时按下相反方向的输入"
 #define MGBA_ALLOW_OPPOSING_DIRECTIONS_INFO_0_CHS "开启此选项会允许同时按下/快速切换/同时按住左右键（或者上下键），此功能可能会导致角色移动问题。"
-#define MGBA_SOLAR_SENSOR_LEVEL_LABEL_CHS "太阳光传感器等级"
+#define MGBA_SOLAR_SENSOR_LEVEL_LABEL_CHS "光线传感器等级"
 #define MGBA_SOLAR_SENSOR_LEVEL_INFO_0_CHS "设置环境光强敏感度。有些带有太阳光传感器的卡带使用此功能，例如：《我们的太阳》系列。"
 #define OPTION_VAL_SENSOR_CHS "如果可用则使用当前设备自带传感器"
 #define MGBA_FORCE_GBP_LABEL_CHS "GBP底座震动功能（需要重启）"
